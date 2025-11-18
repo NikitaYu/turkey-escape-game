@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+    <div id="debug-info" style="color: white; font-family: monospace; padding: 10px;"></div>
+    <script>
+        const debugDiv = document.getElementById('debug-info');
+
+        function log(msg) {
+            console.log(msg);
+            debugDiv.innerHTML += msg + '<br>';
+        }
+
+        log('Starting game...');
+        log('Phaser version: ' + Phaser.VERSION);
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            backgroundColor: '#000000',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 }, // No gravity for top-down
+                    debug: true
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        function preload() {
+            log('Preload started');
+            this.load.json('levels', 'levels.json');
+            this.load.on('complete', () => log('Load complete'));
+            this.load.on('loaderror', (file) => log('Load error: ' + file.key));
+        }
+
+        function create() {
+            log('Create started');
+
+            const levelsData = this.cache.json.get('levels');
+            log('Levels data loaded: ' + (levelsData ? 'YES' : 'NO'));
+
+            if (levelsData) {
+                log('Number of levels: ' + levelsData.levels.length);
+            }
+
+            // Draw a test rectangle
+            const graphics = this.add.graphics();
+            graphics.fillStyle(0xFF4500, 1);
+            graphics.fillRect(100, 100, 100, 100);
+            log('Drew test orange rectangle at 100,100');
+
+            // Add test text
+            this.add.text(400, 300, 'TEST TEXT', {
+                fontSize: '32px',
+                fill: '#FFFFFF'
+            }).setOrigin(0.5);
+            log('Drew test text');
+        }
+
+        function update() {
+            // Empty
+        }
+    </script>
+</body>
+</html>

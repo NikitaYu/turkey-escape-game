@@ -33,7 +33,7 @@ const config = {
     physics: {
         default: 'arcade',
         arcade: {
-            gravity: { y: GRAVITY },
+            gravity: { y: 0 },  // No gravity for top-down game
             debug: true  // Toggle off for production
         }
     },
@@ -219,8 +219,8 @@ function updatePlayer(delta) {
         player.setVelocityY(velocityY * 0.7);
     }
 
-    // Jump handling (Space key)
-    if (Phaser.Input.Keyboard.JustDown(keys.SPACE) && player.body.blocked.down) {
+    // Jump handling (Space key) - purely visual effect in top-down game
+    if (Phaser.Input.Keyboard.JustDown(keys.SPACE)) {
         handleJump.call(this);
     }
 }
@@ -233,9 +233,6 @@ function handleJump() {
 
     isJumping = true;
 
-    // Apply jump velocity
-    player.setVelocityY(JUMP_VEL);
-
     // Visual effect 1: Enlarge player (tween scale 1.0 -> 1.3)
     this.tweens.add({
         targets: player,
@@ -243,7 +240,10 @@ function handleJump() {
         scaleY: 1.3,
         duration: 600,
         yoyo: true,
-        ease: 'Sine.easeInOut'
+        ease: 'Sine.easeInOut',
+        onComplete: () => {
+            isJumping = false;
+        }
     });
 
     // Visual effect 2: Shrink map away (tween scale 1.0 -> 0.92)
@@ -258,13 +258,6 @@ function handleJump() {
 
     // Subtle whoosh sound (placeholder - generate sine wave beep)
     playJumpSound.call(this);
-
-    // Reset jumping flag when landing
-    this.time.delayedCall(600, () => {
-        if (player.body.blocked.down) {
-            isJumping = false;
-        }
-    });
 }
 
 // Placeholder jump sound (simple beep using Web Audio)
