@@ -96,13 +96,14 @@ function create() {
         powerups = this.physics.add.group();
         console.log('Physics groups created');
 
-        // Create player
+        // Create player container
         console.log('Creating player...');
-        player = this.physics.add.sprite(64, 160, null);
-        player.setSize(20, 20);
-        player.displayWidth = 20;
-        player.displayHeight = 20;
-        console.log('Player sprite created at 64,160');
+        player = this.add.container(64, 160);
+
+        // Add physics body to container
+        this.physics.world.enable(player);
+        player.body.setSize(20, 20);
+        console.log('Player container created at 64,160');
 
         // Draw player as orange triangle
         console.log('Drawing player triangle...');
@@ -197,13 +198,19 @@ function buildLevel(map) {
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, TILE_SIZE, TILE_SIZE);
 
-                const hazard = hazards.create(px + 16, py + 16, null);
-                hazard.setSize(20, 20);
+                // Create hazard container
+                const hazard = this.add.container(px + 16, py + 16);
+                this.physics.world.enable(hazard);
+                hazard.body.setSize(20, 20);
+
                 const hgfx = this.add.graphics();
                 hgfx.fillStyle(0x444444, 1);
                 hgfx.fillCircle(0, 0, 10);
                 hazard.add(hgfx);
                 hazard.setData('speed', 60);
+
+                // Add to hazards group manually
+                hazards.add(hazard);
             } else if (tile === 3) {
                 // Start
                 const floor = this.add.graphics();
@@ -297,7 +304,7 @@ function update(time, delta) {
     const speed = PLAYER_SPEED * speedMultiplier;
     const angle = player.rotation;
 
-    player.setVelocity(
+    player.body.setVelocity(
         Math.cos(angle) * speed,
         Math.sin(angle) * speed
     );
@@ -325,8 +332,9 @@ function update(time, delta) {
 
     // Update hazards
     hazards.getChildren().forEach(h => {
+        if (!h.body) return;
         const angle = Phaser.Math.Angle.Between(h.x, h.y, player.x, player.y);
-        h.setVelocity(
+        h.body.setVelocity(
             Math.cos(angle) * h.getData('speed'),
             Math.sin(angle) * h.getData('speed')
         );
