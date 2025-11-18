@@ -11,6 +11,7 @@
             padding: 0;
             background-color: #000000;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
@@ -20,9 +21,74 @@
             display: block;
             margin: auto;
         }
+        #debug {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.9);
+            color: #000;
+            padding: 10px;
+            font-size: 12px;
+            max-width: 300px;
+            z-index: 1000;
+            border: 2px solid #0f0;
+        }
+        .status {
+            margin: 3px 0;
+        }
+        .ok { color: green; }
+        .error { color: red; }
     </style>
 </head>
 <body>
+    <div id="debug">
+        <div class="status">🔍 Debug Monitor Active</div>
+        <div class="status" id="phaser-check">Checking Phaser...</div>
+        <div class="status" id="game-check">Checking Game...</div>
+        <div class="status" id="preload-check">Preload: Waiting...</div>
+        <div class="status" id="create-check">Create: Waiting...</div>
+        <div class="status" id="update-check">Update: Waiting...</div>
+    </div>
+
+    <script>
+        // Debug logging
+        function log(id, msg, isOk = true) {
+            console.log(msg);
+            const el = document.getElementById(id);
+            if (el) {
+                el.textContent = msg;
+                el.className = isOk ? 'status ok' : 'status error';
+            }
+        }
+
+        // Check Phaser loaded
+        if (typeof Phaser !== 'undefined') {
+            log('phaser-check', '✓ Phaser ' + Phaser.VERSION + ' loaded');
+        } else {
+            log('phaser-check', '✗ Phaser NOT loaded', false);
+        }
+    </script>
+
     <script src="main.js"></script>
+
+    <script>
+        // Verify game instance
+        setTimeout(() => {
+            if (typeof game !== 'undefined') {
+                log('game-check', '✓ Game instance created');
+            } else {
+                log('game-check', '✗ Game instance FAILED', false);
+            }
+        }, 100);
+
+        // Auto-hide debug after 10 seconds if all OK
+        setTimeout(() => {
+            const debugEl = document.getElementById('debug');
+            if (debugEl && !document.querySelector('.error')) {
+                debugEl.style.opacity = '0.3';
+                debugEl.style.pointerEvents = 'none';
+            }
+        }, 10000);
+    </script>
 </body>
 </html>
