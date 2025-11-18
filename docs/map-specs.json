@@ -1,0 +1,12 @@
+{
+  "maps": [
+    {
+      "id": 1,
+      "size": [15,12],
+      "hazards": 2,
+      "powerups": 1,
+      "exits": [1]  // Linear for first 3
+    },
+    // ... Claude fills 2-5 with 2D arrays for walls/hazards
+  ]
+}
