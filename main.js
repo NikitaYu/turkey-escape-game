@@ -1,5 +1,5 @@
 // ============================================================
-// TURKEY ESCAPE - Grid Movement + Breathing Animation
+// TURKEY ESCAPE - Triangle Sprite + Working Pulsation
 // ============================================================
 
 console.log('🎮 main.js loading...');
@@ -7,17 +7,20 @@ console.log('🎮 main.js loading...');
 // GRID SPECS
 const GRID_SIZE = 64;
 const PLAYER_SIZE = 60;
-const MOVE_DURATION = 1000; // 1 cell per second
-const STEPS_PER_CELL = 4;
+const MOVE_DURATION = 1000;
 
-// PULSATION SPECS
-const PULSE_IDLE_DURATION = 1000; // 1 full breath per second
-const PULSE_MOVE_DURATION = 250;  // 4 pulses per second (synced with steps)
-const PULSE_SCALE_MIN = 0.80;     // Shrink to 80%
-const PULSE_SCALE_MAX = 1.00;     // Normal size (never exceed 100%)
+// PULSATION SPECS (redraw-based, not scale-based)
+const PULSE_IDLE_RATE = 1; // 1 pulse per second
+const PULSE_MOVE_RATE = 4; // 4 pulses per second
+const SIZE_MIN = 0.80; // 80% of normal size
+const SIZE_MAX = 1.00; // 100% (normal)
 
-// INPUT QUEUE SPECS
-const QUEUE_TIMEOUT_CELLS = 2; // Remember input for 2 cells
+// TRIANGLE SPECS
+const TRI_HEIGHT = 30; // Forward point to back
+const TRI_BACK_WIDTH = 21; // Back side (70% of height)
+
+// INPUT QUEUE
+const QUEUE_TIMEOUT_CELLS = 2;
 
 const config = {
     type: Phaser.AUTO,
@@ -38,7 +41,6 @@ const config = {
     }
 };
 
-console.log('🎮 Creating game instance...');
 const game = new Phaser.Game(config);
 
 // Game state
@@ -57,17 +59,22 @@ let debugText;
 let timeRemaining = 90;
 let updateCount = 0;
 
-// Grid movement state
+// Movement state
 let currentGridX = 0;
 let currentGridY = 0;
 let currentDirection = 'up';
 let queuedDirection = null;
-let queueAge = 0; // How many cells since input was queued
+let queueAge = 0;
 let isMoving = false;
 let movementTween = null;
-let pulseTween = null;
 
-// Level 1
+// Pulsation state
+let pulsePhase = 0; // 0 to 1 (breathing cycle)
+let pulseDirection = 1; // 1 = growing, -1 = shrinking
+let pulseRate = PULSE_IDLE_RATE;
+let currentSize = SIZE_MAX;
+
+// Level
 const LEVEL_1 = [
     [1,1,1,1,1,1,1,1,1,1,1,1],
     [1,0,0,0,0,0,4,0,0,0,0,1],
@@ -83,20 +90,18 @@ const LEVEL_1 = [
 ];
 
 function preload() {
-    console.log('📦 PRELOAD started');
-    log('preload-check', '✓ Preload running');
+    console.log('📦 PRELOAD');
+    log('preload-check', '✓ Preload');
 }
 
 function create() {
-    console.log('🎨 CREATE started');
-    log('create-check', '✓ Create running');
-
+    console.log('🎨 CREATE');
     scene = this;
 
     try {
-        const testText = this.add.text(400, 30, 'BREATHING ANIMATION + SMART INPUT', {
+        const testText = this.add.text(400, 30, 'TRIANGLE + BREATHING', {
             fontSize: '18px',
-            fill: '#FFFF00',
+            fill: '#00FF00',
             fontFamily: 'monospace'
         });
         testText.setOrigin(0.5);
@@ -105,22 +110,18 @@ function create() {
         walls = this.physics.add.staticGroup();
         hazards = this.physics.add.group();
 
-        // Create player
+        // Create player container
         player = this.add.container(0, 0);
         this.physics.world.enable(player);
         player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
         player.body.setOffset(-PLAYER_SIZE/2, -PLAYER_SIZE/2);
 
-        // Player graphics
+        // Create graphics for triangle
         playerGraphics = this.add.graphics();
-        playerGraphics.fillStyle(0xFF4500, 1);
-        playerGraphics.lineStyle(3, 0xCC3700, 1);
-        playerGraphics.fillRect(-30, -30, 60, 60);
-        playerGraphics.strokeRect(-30, -30, 60, 60);
         player.add(playerGraphics);
 
-        // Start breathing animation
-        startPulsation('idle');
+        // Draw initial triangle
+        drawPlayerTriangle();
 
         // Input
         cursors = this.input.keyboard.createCursorKeys();
@@ -141,6 +142,7 @@ function create() {
         this.cameras.main.setZoom(1.2);
 
         currentDirection = 'up';
+        setPulseRate('idle');
 
         console.log('✅ CREATE COMPLETE');
         log('create-check', '✓ Ready!');
@@ -180,11 +182,11 @@ function buildLevel(map) {
 
                 const hazard = this.add.container(px + GRID_SIZE/2, py + GRID_SIZE/2);
                 this.physics.world.enable(hazard);
-                hazard.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
+                hazard.body.setSize(40, 40);
 
                 const hgfx = this.add.graphics();
                 hgfx.fillStyle(0xFF0000, 1);
-                hgfx.fillCircle(0, 0, 25);
+                hgfx.fillCircle(0, 0, 20);
                 hazard.add(hgfx);
                 hazards.add(hazard);
             } else if (tile === 3) {
@@ -225,7 +227,7 @@ function createUI() {
     timerText.setOrigin(1, 0);
     timerText.setScrollFactor(0);
 
-    levelText = this.add.text(400, 570, 'WASD: Move | Input queued for 2 cells', {
+    levelText = this.add.text(400, 570, 'WASD: Move | Opposite direction = instant', {
         fontSize: '14px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
@@ -233,7 +235,6 @@ function createUI() {
     levelText.setOrigin(0.5, 0);
     levelText.setScrollFactor(0);
 
-    // Debug panel outside viewport
     debugText = this.add.text(850, 50, '', {
         fontSize: '13px',
         fill: '#00FF00',
@@ -261,30 +262,32 @@ function update(time, delta) {
     updateCount++;
 
     if (updateCount === 1) {
-        log('update-check', '✓ Update running');
+        log('update-check', '✓ Running');
     }
 
     if (!player) return;
 
     handleInput();
 
-    // Try to move every frame when idle
+    // Try to move when idle
     if (!isMoving) {
         startMovement();
     }
 
-    // Update debug
+    // Update pulsation (breathing animation)
+    updatePulsation(delta);
+
+    // Debug
     if (debugText) {
         debugText.setText(
             `=== DEBUG ===\n` +
             `Grid: (${currentGridX},${currentGridY})\n` +
-            `Pixel: (${Math.round(player.x)},${Math.round(player.y)})\n` +
             `Direction: ${currentDirection}\n` +
             `Queued: ${queuedDirection || 'none'}\n` +
-            `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS} cells\n` +
+            `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS}\n` +
             `Moving: ${isMoving}\n` +
-            `Pulse: ${pulseTween ? (pulseTween.isPlaying() ? 'ACTIVE' : 'stopped') : 'null'}\n` +
-            `Scale: ${playerGraphics ? playerGraphics.scaleX.toFixed(2) : 'N/A'}`
+            `Pulse: ${pulseRate}/sec\n` +
+            `Size: ${(currentSize * 100).toFixed(0)}%`
         );
     }
 
@@ -296,40 +299,135 @@ function update(time, delta) {
 }
 
 function handleInput() {
-    // Immediately detect and queue input (latest input replaces old)
+    // Check if input is opposite direction (180° turn)
+    const oppositeDir = {
+        'up': 'down',
+        'down': 'up',
+        'left': 'right',
+        'right': 'left'
+    };
+
     if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
-        queuedDirection = 'up';
-        queueAge = 0; // Reset age counter
-        console.log('[INPUT] Queued: UP');
+        if (currentDirection === 'down') {
+            // INSTANT 180° turn
+            currentDirection = 'up';
+            drawPlayerTriangle(); // Rotate triangle instantly
+            console.log('[INSTANT 180°] Turned UP');
+        } else {
+            queuedDirection = 'up';
+            queueAge = 0;
+            console.log('[INPUT] Queued: UP');
+        }
     }
     if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(cursors.down)) {
-        queuedDirection = 'down';
-        queueAge = 0;
-        console.log('[INPUT] Queued: DOWN');
+        if (currentDirection === 'up') {
+            currentDirection = 'down';
+            drawPlayerTriangle();
+            console.log('[INSTANT 180°] Turned DOWN');
+        } else {
+            queuedDirection = 'down';
+            queueAge = 0;
+            console.log('[INPUT] Queued: DOWN');
+        }
     }
     if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(cursors.left)) {
-        queuedDirection = 'left';
-        queueAge = 0;
-        console.log('[INPUT] Queued: LEFT');
+        if (currentDirection === 'right') {
+            currentDirection = 'left';
+            drawPlayerTriangle();
+            console.log('[INSTANT 180°] Turned LEFT');
+        } else {
+            queuedDirection = 'left';
+            queueAge = 0;
+            console.log('[INPUT] Queued: LEFT');
+        }
     }
     if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(cursors.right)) {
-        queuedDirection = 'right';
-        queueAge = 0;
-        console.log('[INPUT] Queued: RIGHT');
+        if (currentDirection === 'left') {
+            currentDirection = 'right';
+            drawPlayerTriangle();
+            console.log('[INSTANT 180°] Turned RIGHT');
+        } else {
+            queuedDirection = 'right';
+            queueAge = 0;
+            console.log('[INPUT] Queued: RIGHT');
+        }
     }
+}
+
+function updatePulsation(delta) {
+    // Update breathing cycle
+    const deltaSeconds = delta / 1000;
+    pulsePhase += deltaSeconds * pulseRate;
+
+    // Oscillate between SIZE_MIN and SIZE_MAX using sine wave
+    // sin goes from -1 to 1, we map to SIZE_MIN to SIZE_MAX
+    currentSize = SIZE_MIN + (SIZE_MAX - SIZE_MIN) * (Math.sin(pulsePhase * Math.PI * 2) * 0.5 + 0.5);
+
+    // Redraw triangle at new size
+    drawPlayerTriangle();
+}
+
+function drawPlayerTriangle() {
+    playerGraphics.clear();
+
+    // Calculate scaled dimensions
+    const height = TRI_HEIGHT * currentSize;
+    const backWidth = TRI_BACK_WIDTH * currentSize;
+
+    // Set colors - ORANGE!
+    playerGraphics.fillStyle(0xFF4500, 1); // Orange fill
+    playerGraphics.lineStyle(3, 0xCC3700, 1); // Darker orange stroke
+
+    // Draw triangle pointing in current direction
+    playerGraphics.beginPath();
+
+    switch(currentDirection) {
+        case 'up':
+            // Point up
+            playerGraphics.moveTo(0, -height/2);           // Top point
+            playerGraphics.lineTo(-backWidth/2, height/2); // Bottom left
+            playerGraphics.lineTo(backWidth/2, height/2);  // Bottom right
+            break;
+        case 'down':
+            // Point down
+            playerGraphics.moveTo(0, height/2);            // Bottom point
+            playerGraphics.lineTo(-backWidth/2, -height/2);// Top left
+            playerGraphics.lineTo(backWidth/2, -height/2); // Top right
+            break;
+        case 'left':
+            // Point left
+            playerGraphics.moveTo(-height/2, 0);           // Left point
+            playerGraphics.lineTo(height/2, -backWidth/2); // Top right
+            playerGraphics.lineTo(height/2, backWidth/2);  // Bottom right
+            break;
+        case 'right':
+            // Point right
+            playerGraphics.moveTo(height/2, 0);            // Right point
+            playerGraphics.lineTo(-height/2, -backWidth/2);// Top left
+            playerGraphics.lineTo(-height/2, backWidth/2); // Bottom left
+            break;
+    }
+
+    playerGraphics.closePath();
+    playerGraphics.fillPath();
+    playerGraphics.strokePath();
+}
+
+function setPulseRate(mode) {
+    pulseRate = mode === 'idle' ? PULSE_IDLE_RATE : PULSE_MOVE_RATE;
+    console.log(`[PULSE] ${mode} mode: ${pulseRate} pulses/sec`);
 }
 
 function startMovement() {
     if (isMoving) return;
 
-    // Age out old queued input after 2 cells
+    // Age out queue
     if (queueAge >= QUEUE_TIMEOUT_CELLS && queuedDirection) {
-        console.log(`[QUEUE TIMEOUT] Dismissed ${queuedDirection} after ${queueAge} cells`);
+        console.log(`[TIMEOUT] Dismissed ${queuedDirection}`);
         queuedDirection = null;
         queueAge = 0;
     }
 
-    // Try queued direction first, then current direction
     const directionToTry = queuedDirection || currentDirection;
 
     let targetGridX = currentGridX;
@@ -345,27 +443,24 @@ function startMovement() {
     const isWall = isWallAt(targetGridX, targetGridY);
 
     if (isWall) {
-        // Queued direction blocked - increment age and keep trying
         if (queuedDirection && queuedDirection !== currentDirection) {
             queueAge++;
-            console.log(`[BLOCKED] Queued ${queuedDirection} blocked, age now ${queueAge}/${QUEUE_TIMEOUT_CELLS}`);
-            return; // Try again next frame
+            console.log(`[BLOCKED] Queued ${queuedDirection}, age ${queueAge}/${QUEUE_TIMEOUT_CELLS}`);
+            return;
         }
-        // Current direction blocked - stay idle
-        console.log(`[BLOCKED] ${currentDirection} blocked at (${currentGridX},${currentGridY})`);
-        startPulsation('idle');
+        setPulseRate('idle');
         return;
     }
 
-    // Valid move - apply queued direction if any
+    // Apply queued direction
     if (queuedDirection) {
         currentDirection = queuedDirection;
         queuedDirection = null;
         queueAge = 0;
-        console.log(`[DIRECTION CHANGE] Now moving: ${currentDirection}`);
+        drawPlayerTriangle(); // Rotate triangle
+        console.log(`[TURN] Now moving: ${currentDirection}`);
     }
 
-    // Start movement
     isMoving = true;
     currentGridX = targetGridX;
     currentGridY = targetGridY;
@@ -373,10 +468,7 @@ function startMovement() {
     const targetPixelX = targetGridX * GRID_SIZE + GRID_SIZE/2;
     const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
 
-    console.log(`[MOVE] ${currentDirection} to grid(${targetGridX},${targetGridY})`);
-
-    // Switch to moving pulsation (faster)
-    startPulsation('moving');
+    setPulseRate('moving');
 
     movementTween = scene.tweens.add({
         targets: player,
@@ -386,39 +478,9 @@ function startMovement() {
         ease: 'Linear',
         onComplete: () => {
             isMoving = false;
-            // Increment queue age after each completed move
-            if (queuedDirection) {
-                queueAge++;
-            }
+            if (queuedDirection) queueAge++;
         }
     });
-}
-
-function startPulsation(mode) {
-    // Stop existing pulsation
-    if (pulseTween) {
-        pulseTween.stop();
-    }
-
-    const duration = mode === 'idle' ? PULSE_IDLE_DURATION : PULSE_MOVE_DURATION;
-
-    // Pulsation: shrink from 100% to 80% and back (breathing effect)
-    pulseTween = scene.tweens.add({
-        targets: playerGraphics,
-        scaleX: PULSE_SCALE_MIN,  // Shrink to 80%
-        scaleY: PULSE_SCALE_MIN,
-        duration: duration / 2,    // Half cycle for shrink
-        yoyo: true,                // Then grow back to 100%
-        repeat: -1,
-        ease: 'Sine.easeInOut',    // Smooth breathing
-        onStart: () => {
-            // Ensure we start at 100%
-            playerGraphics.setScale(PULSE_SCALE_MAX);
-        }
-    });
-
-    const pulsesPerSec = mode === 'idle' ? 1 : 4;
-    console.log(`[PULSE] ${mode} - ${pulsesPerSec} pulse/sec (100% ↔ 80%)`);
 }
 
 function isWallAt(gridX, gridY) {
@@ -428,7 +490,7 @@ function isWallAt(gridX, gridY) {
 }
 
 function hitHazard(player, hazard) {
-    console.log('[HAZARD] Hit!');
+    console.log('[HAZARD]');
     hazard.destroy();
     lives--;
 
