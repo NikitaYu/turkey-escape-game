@@ -273,7 +273,11 @@ function update(time, delta) {
 
     // Try to move when idle
     // If stopped, only try to move when there's a new queued input
-    if (!isMoving && (!stoppedByPlayer || queuedDirection)) {
+    const shouldMove = !isMoving && (!stoppedByPlayer || queuedDirection);
+    if (updateCount % 60 === 0) {  // Log every 60 frames (~1 second)
+        console.log(`[UPDATE] isMoving: ${isMoving}, stopped: ${stoppedByPlayer}, queued: ${queuedDirection}, shouldMove: ${shouldMove}`);
+    }
+    if (shouldMove) {
         startMovement();
     }
 
@@ -399,6 +403,8 @@ function setPulseRate(mode) {
 }
 
 function startMovement() {
+    console.log(`[START_MOVEMENT] Called - isMoving: ${isMoving}, stopped: ${stoppedByPlayer}, queued: ${queuedDirection}, current: ${currentDirection}`);
+
     if (isMoving) return;
 
     // Helper to check if direction is opposite
@@ -481,6 +487,13 @@ function startMovement() {
     const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
 
     setPulseRate('moving');
+
+    console.log(`[TWEEN] Creating tween - scene exists: ${!!scene}, target: (${targetPixelX}, ${targetPixelY})`);
+
+    if (!scene) {
+        console.error('[ERROR] scene is undefined!');
+        return;
+    }
 
     movementTween = scene.tweens.add({
         targets: player,
