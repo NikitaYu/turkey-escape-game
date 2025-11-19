@@ -271,8 +271,8 @@ function update(time, delta) {
 
     handleInput();
 
-    // Try to move when idle
-    if (!isMoving) {
+    // Try to move when idle (but not if player manually stopped)
+    if (!isMoving && !stoppedByPlayer) {
         startMovement();
     }
 
