@@ -31,7 +31,7 @@ const config = {
         default: 'arcade',
         arcade: {
             gravity: { y: 0 },
-            debug: true
+            debug: false  // DISABLED - was showing pink physics body
         }
     },
     scene: {
@@ -110,17 +110,18 @@ function create() {
         walls = this.physics.add.staticGroup();
         hazards = this.physics.add.group();
 
-        // Create player container
+        // Create player container (for physics)
         player = this.add.container(0, 0);
         this.physics.world.enable(player);
         player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
         player.body.setOffset(-PLAYER_SIZE/2, -PLAYER_SIZE/2);
 
-        // Create graphics for triangle
+        // Create graphics for triangle (separate, not in container)
         playerGraphics = this.add.graphics();
-        player.add(playerGraphics);
+        playerGraphics.setDepth(100); // Render on top
 
         // Draw initial triangle
+        console.log('🔺 Drawing initial triangle...');
         drawPlayerTriangle();
 
         // Input
@@ -299,58 +300,63 @@ function update(time, delta) {
 }
 
 function handleInput() {
-    // Check if input is opposite direction (180° turn)
-    const oppositeDir = {
-        'up': 'down',
-        'down': 'up',
-        'left': 'right',
-        'right': 'left'
+    // Helper to try instant direction change
+    const tryInstantTurn = (newDirection) => {
+        if (newDirection === currentDirection) {
+            return; // Already going that way
+        }
+
+        // Check if new direction is valid (not blocked)
+        let testGridX = currentGridX;
+        let testGridY = currentGridY;
+
+        switch(newDirection) {
+            case 'up': testGridY--; break;
+            case 'down': testGridY++; break;
+            case 'left': testGridX--; break;
+            case 'right': testGridX++; break;
+        }
+
+        const isBlocked = isWallAt(testGridX, testGridY);
+
+        if (!isBlocked) {
+            // INSTANT TURN - direction is valid!
+            console.log(`[INSTANT TURN] ${currentDirection} → ${newDirection} (valid path)`);
+
+            // Cancel current movement if any
+            if (isMoving && movementTween) {
+                movementTween.stop();
+                isMoving = false;
+            }
+
+            // Change direction immediately
+            currentDirection = newDirection;
+            queuedDirection = null;
+            queueAge = 0;
+            drawPlayerTriangle(); // Rotate triangle instantly
+
+            // Start moving in new direction immediately
+            startMovement();
+        } else {
+            // Blocked - queue it
+            console.log(`[QUEUE] ${newDirection} blocked, queuing for 2 cells`);
+            queuedDirection = newDirection;
+            queueAge = 0;
+        }
     };
 
+    // Check each direction input
     if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
-        if (currentDirection === 'down') {
-            // INSTANT 180° turn
-            currentDirection = 'up';
-            drawPlayerTriangle(); // Rotate triangle instantly
-            console.log('[INSTANT 180°] Turned UP');
-        } else {
-            queuedDirection = 'up';
-            queueAge = 0;
-            console.log('[INPUT] Queued: UP');
-        }
+        tryInstantTurn('up');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(cursors.down)) {
-        if (currentDirection === 'up') {
-            currentDirection = 'down';
-            drawPlayerTriangle();
-            console.log('[INSTANT 180°] Turned DOWN');
-        } else {
-            queuedDirection = 'down';
-            queueAge = 0;
-            console.log('[INPUT] Queued: DOWN');
-        }
+        tryInstantTurn('down');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(cursors.left)) {
-        if (currentDirection === 'right') {
-            currentDirection = 'left';
-            drawPlayerTriangle();
-            console.log('[INSTANT 180°] Turned LEFT');
-        } else {
-            queuedDirection = 'left';
-            queueAge = 0;
-            console.log('[INPUT] Queued: LEFT');
-        }
+        tryInstantTurn('left');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(cursors.right)) {
-        if (currentDirection === 'left') {
-            currentDirection = 'right';
-            drawPlayerTriangle();
-            console.log('[INSTANT 180°] Turned RIGHT');
-        } else {
-            queuedDirection = 'right';
-            queueAge = 0;
-            console.log('[INPUT] Queued: RIGHT');
-        }
+        tryInstantTurn('right');
     }
 }
 
@@ -368,7 +374,13 @@ function updatePulsation(delta) {
 }
 
 function drawPlayerTriangle() {
+    if (!playerGraphics || !player) return;
+
     playerGraphics.clear();
+
+    // Position graphics at player location
+    const px = player.x;
+    const py = player.y;
 
     // Calculate scaled dimensions
     const height = TRI_HEIGHT * currentSize;
@@ -384,27 +396,27 @@ function drawPlayerTriangle() {
     switch(currentDirection) {
         case 'up':
             // Point up
-            playerGraphics.moveTo(0, -height/2);           // Top point
-            playerGraphics.lineTo(-backWidth/2, height/2); // Bottom left
-            playerGraphics.lineTo(backWidth/2, height/2);  // Bottom right
+            playerGraphics.moveTo(px, py - height/2);           // Top point
+            playerGraphics.lineTo(px - backWidth/2, py + height/2); // Bottom left
+            playerGraphics.lineTo(px + backWidth/2, py + height/2);  // Bottom right
             break;
         case 'down':
             // Point down
-            playerGraphics.moveTo(0, height/2);            // Bottom point
-            playerGraphics.lineTo(-backWidth/2, -height/2);// Top left
-            playerGraphics.lineTo(backWidth/2, -height/2); // Top right
+            playerGraphics.moveTo(px, py + height/2);            // Bottom point
+            playerGraphics.lineTo(px - backWidth/2, py - height/2);// Top left
+            playerGraphics.lineTo(px + backWidth/2, py - height/2); // Top right
             break;
         case 'left':
             // Point left
-            playerGraphics.moveTo(-height/2, 0);           // Left point
-            playerGraphics.lineTo(height/2, -backWidth/2); // Top right
-            playerGraphics.lineTo(height/2, backWidth/2);  // Bottom right
+            playerGraphics.moveTo(px - height/2, py);           // Left point
+            playerGraphics.lineTo(px + height/2, py - backWidth/2); // Top right
+            playerGraphics.lineTo(px + height/2, py + backWidth/2);  // Bottom right
             break;
         case 'right':
             // Point right
-            playerGraphics.moveTo(height/2, 0);            // Right point
-            playerGraphics.lineTo(-height/2, -backWidth/2);// Top left
-            playerGraphics.lineTo(-height/2, backWidth/2); // Bottom left
+            playerGraphics.moveTo(px + height/2, py);            // Right point
+            playerGraphics.lineTo(px - height/2, py - backWidth/2);// Top left
+            playerGraphics.lineTo(px - height/2, py + backWidth/2); // Bottom left
             break;
     }
 
