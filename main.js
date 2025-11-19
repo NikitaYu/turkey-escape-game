@@ -1,12 +1,15 @@
 // ============================================================
-// TURKEY ESCAPE - Grid-Based Movement System
+// TURKEY ESCAPE - Classic Grid Movement (Pac-Man Style)
 // ============================================================
 
 console.log('🎮 main.js loading...');
 
-const GRID_SIZE = 32; // Grid cell size
-const PLAYER_SIZE = 28; // Player fits in grid cell (with 4px padding)
-const MOVE_SPEED = 150; // Pixels per second
+// GRID SPECS
+const GRID_SIZE = 64; // Grid cell size
+const PLAYER_SIZE = 60; // Visible sprite (64px total with 4px padding)
+const MOVE_DURATION = 1000; // 1 cell per second
+const STEPS_PER_CELL = 4; // 4 animation steps per cell
+const STEP_DURATION = MOVE_DURATION / STEPS_PER_CELL; // 250ms per step
 
 const config = {
     type: Phaser.AUTO,
@@ -29,7 +32,6 @@ const config = {
 
 console.log('🎮 Creating game instance...');
 const game = new Phaser.Game(config);
-console.log('🎮 Game instance created:', game);
 
 // Game state
 let player;
@@ -43,29 +45,29 @@ let livesIcons = [];
 let timerText;
 let levelText;
 let timeRemaining = 90;
-
-// Grid movement state
-let targetX = null;
-let targetY = null;
-let isMoving = false;
-let facingDirection = 'up'; // 'up', 'down', 'left', 'right'
-
 let updateCount = 0;
 
-// Level 1: Vertical corridor at bottom-center, player runs up
+// Grid movement state
+let currentGridX = 0;
+let currentGridY = 0;
+let currentDirection = 'up'; // Current moving direction
+let queuedDirection = null; // Queued direction (last input)
+let isMoving = false;
+let movementTween = null;
+
+// Level 1: Start at bottom-center, vertical corridor up
 const LEVEL_1 = [
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-    [1,0,0,0,0,0,0,4,0,0,0,0,0,0,1],
-    [1,0,1,1,1,1,1,0,1,1,1,1,1,0,1],
-    [1,0,1,0,0,0,0,0,0,0,0,0,1,0,1],
-    [1,0,1,0,1,1,1,2,1,1,1,0,1,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,1,1,1,0,1,0,1,0,1,1,1,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,1,1,1,1,1,1,0,1,1,1,1,1,1,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,3,0,0,0,0,0,0,1], // 3 = start at bottom center
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    [1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,4,0,0,0,0,1],
+    [1,0,1,1,1,1,0,1,1,1,0,1],
+    [1,0,1,0,0,0,0,0,0,1,0,1],
+    [1,0,0,0,1,1,2,1,1,0,0,1],
+    [1,0,1,0,0,0,0,0,0,0,0,1],
+    [1,0,1,1,1,0,1,0,1,1,1,1],
+    [1,0,0,0,0,0,0,0,0,0,0,1],
+    [1,1,1,1,1,1,0,1,1,1,1,1],
+    [1,0,0,0,0,0,3,0,0,0,0,1], // Start at bottom center
+    [1,1,1,1,1,1,1,1,1,1,1,1]
 ];
 
 function preload() {
@@ -78,100 +80,77 @@ function create() {
     log('create-check', '✓ Create running');
 
     try {
-        // Add test elements
-        console.log('Adding test green rectangle...');
-        const testRect = this.add.rectangle(200, 100, 150, 150, 0x00FF00);
-        console.log('Green rect created');
-
-        console.log('Adding test text...');
-        const testText = this.add.text(400, 50, 'GRID GAME!', {
-            fontSize: '32px',
+        // Test elements
+        const testText = this.add.text(400, 30, 'GRID MOVEMENT', {
+            fontSize: '24px',
             fill: '#FFFF00',
             fontFamily: 'monospace'
         });
         testText.setOrigin(0.5);
-        console.log('Test text created');
+        testText.setScrollFactor(0);
 
         // Create physics groups
-        console.log('Creating physics groups...');
         walls = this.physics.add.staticGroup();
         hazards = this.physics.add.group();
-        console.log('Physics groups created');
 
-        // Create player (container for graphics)
-        console.log('Creating player...');
-        player = this.add.container(64, 320);
+        // Create player container
+        player = this.add.container(0, 0);
         this.physics.world.enable(player);
         player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
         player.body.setOffset(-PLAYER_SIZE/2, -PLAYER_SIZE/2);
-        console.log('Player container created');
 
-        // Draw player as orange square (simpler for grid)
+        // Draw player sprite (60px visible, 4px padding = 64px total)
         playerGraphics = this.add.graphics();
         playerGraphics.fillStyle(0xFF4500, 1);
-        playerGraphics.lineStyle(2, 0xCC3700, 1);
-        playerGraphics.fillRect(-PLAYER_SIZE/2, -PLAYER_SIZE/2, PLAYER_SIZE, PLAYER_SIZE);
-        playerGraphics.strokeRect(-PLAYER_SIZE/2, -PLAYER_SIZE/2, PLAYER_SIZE, PLAYER_SIZE);
+        playerGraphics.lineStyle(3, 0xCC3700, 1);
+        // 60px sprite centered with 2px margin on each side
+        playerGraphics.fillRect(-30, -30, 60, 60);
+        playerGraphics.strokeRect(-30, -30, 60, 60);
         player.add(playerGraphics);
-        console.log('Player graphics attached');
+        console.log('Player created (60px sprite, 64px cell)');
 
         // Input
-        console.log('Setting up input...');
         cursors = this.input.keyboard.createCursorKeys();
         keys = this.input.keyboard.addKeys({
             W: Phaser.Input.Keyboard.KeyCodes.W,
             A: Phaser.Input.Keyboard.KeyCodes.A,
             S: Phaser.Input.Keyboard.KeyCodes.S,
-            D: Phaser.Input.Keyboard.KeyCodes.D,
-            SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE
+            D: Phaser.Input.Keyboard.KeyCodes.D
         });
-        console.log('Input configured');
 
         // Build level
-        console.log('Building level...');
         buildLevel.call(this, LEVEL_1);
-        console.log('Level built');
 
         // UI
-        console.log('Creating UI...');
         createUI.call(this);
-        console.log('UI created');
 
         // Collisions
-        console.log('Setting up collisions...');
         this.physics.add.collider(player, walls);
         this.physics.add.overlap(player, hazards, hitHazard, null, this);
-        console.log('Collisions configured');
 
         // Camera
-        console.log('Setting up camera...');
-        this.cameras.main.startFollow(player, true, 0.1, 0.1);
-        this.cameras.main.setZoom(1.5);
-        console.log('Camera configured');
+        this.cameras.main.startFollow(player, true, 0.08, 0.08);
+        this.cameras.main.setZoom(1.2);
 
-        // Start automatic upward movement
-        facingDirection = 'up';
-        console.log('Player will auto-move UP');
+        // Start moving up
+        currentDirection = 'up';
+        startMovement.call(this);
 
         console.log('✅ CREATE COMPLETE');
-        log('create-check', '✓ Create COMPLETED - Grid Game Ready!');
+        log('create-check', '✓ Grid movement ready!');
 
     } catch (error) {
-        console.error('❌ ERROR in create():', error);
-        log('create-check', '✗ Create ERROR: ' + error.message, false);
+        console.error('❌ ERROR:', error);
+        log('create-check', '✗ ERROR: ' + error.message, false);
     }
 }
 
 function buildLevel(map) {
-    console.log('Building level map...');
-    let tileCount = 0;
-
     for (let y = 0; y < map.length; y++) {
         for (let x = 0; x < map[y].length; x++) {
             const tile = map[y][x];
             const px = x * GRID_SIZE;
             const py = y * GRID_SIZE;
-            tileCount++;
 
             if (tile === 0) {
                 // Floor
@@ -191,7 +170,7 @@ function buildLevel(map) {
                 wall.setVisible(false);
                 wall.refreshBody();
             } else if (tile === 2) {
-                // Floor + Hazard
+                // Hazard
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
@@ -202,19 +181,20 @@ function buildLevel(map) {
 
                 const hgfx = this.add.graphics();
                 hgfx.fillStyle(0xFF0000, 1);
-                hgfx.fillCircle(0, 0, PLAYER_SIZE/2);
+                hgfx.fillCircle(0, 0, 25);
                 hazard.add(hgfx);
-                hazard.setData('speed', 0);
-
                 hazards.add(hazard);
             } else if (tile === 3) {
-                // Start position
+                // Start
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
 
+                // Position player at cell center
+                currentGridX = x;
+                currentGridY = y;
                 player.setPosition(px + GRID_SIZE/2, py + GRID_SIZE/2);
-                console.log('Player positioned at start:', px + GRID_SIZE/2, py + GRID_SIZE/2);
+                console.log(`Player start: grid(${x},${y}) pixel(${player.x},${player.y})`);
             } else if (tile === 4) {
                 // Exit
                 const floor = this.add.graphics();
@@ -222,18 +202,14 @@ function buildLevel(map) {
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
 
                 const exit = this.add.graphics();
-                exit.lineStyle(3, 0x00FF00, 1);
-                exit.strokeRect(px + 4, py + 4, GRID_SIZE - 8, GRID_SIZE - 8);
-                exit.setData('isExit', true);
+                exit.lineStyle(4, 0x00FF00, 1);
+                exit.strokeRect(px + 6, py + 6, GRID_SIZE - 12, GRID_SIZE - 12);
             }
         }
     }
-    console.log(`Level built: ${tileCount} tiles processed`);
 }
 
 function createUI() {
-    console.log('Creating UI elements...');
-
     // Lives
     for (let i = 0; i < 3; i++) {
         const icon = this.add.graphics();
@@ -252,12 +228,13 @@ function createUI() {
     timerText.setOrigin(1, 0);
     timerText.setScrollFactor(0);
 
-    // Level
-    levelText = this.add.text(20, 560, 'Level 1 - WASD to move', {
-        fontSize: '18px',
+    // Level info
+    levelText = this.add.text(400, 570, 'WASD: Change Direction | 1 cell/sec', {
+        fontSize: '14px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
     });
+    levelText.setOrigin(0.5, 0);
     levelText.setScrollFactor(0);
 }
 
@@ -278,17 +255,12 @@ function update(time, delta) {
     updateCount++;
 
     if (updateCount === 1) {
-        console.log('🔄 UPDATE running!');
-        log('update-check', '✓ Update running (frame: 1)');
-    }
-
-    if (updateCount % 60 === 0) {
-        log('update-check', `✓ Update running (frame: ${updateCount})`);
+        log('update-check', '✓ Update running');
     }
 
     if (!player) return;
 
-    handleGridMovement.call(this, delta);
+    handleInput();
 
     // Timer
     if (timeRemaining > 0) {
@@ -297,67 +269,87 @@ function update(time, delta) {
     }
 }
 
-function handleGridMovement(delta) {
-    const currentGridX = Math.round(player.x / GRID_SIZE);
-    const currentGridY = Math.round(player.y / GRID_SIZE);
-
-    // Check for input to change direction
+function handleInput() {
+    // Queue last direction input (only at intersections)
     if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
-        facingDirection = 'up';
-        console.log('Direction: UP');
+        queuedDirection = 'up';
+        console.log('Queued: UP');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(cursors.down)) {
-        facingDirection = 'down';
-        console.log('Direction: DOWN');
+        queuedDirection = 'down';
+        console.log('Queued: DOWN');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(cursors.left)) {
-        facingDirection = 'left';
-        console.log('Direction: LEFT');
+        queuedDirection = 'left';
+        console.log('Queued: LEFT');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(cursors.right)) {
-        facingDirection = 'right';
-        console.log('Direction: RIGHT');
-    }
-
-    // Constant movement in facing direction
-    let velocityX = 0;
-    let velocityY = 0;
-
-    switch(facingDirection) {
-        case 'up':
-            velocityY = -MOVE_SPEED;
-            break;
-        case 'down':
-            velocityY = MOVE_SPEED;
-            break;
-        case 'left':
-            velocityX = -MOVE_SPEED;
-            break;
-        case 'right':
-            velocityX = MOVE_SPEED;
-            break;
-    }
-
-    // Check next grid position for collision
-    const nextGridX = currentGridX + (velocityX > 0 ? 1 : (velocityX < 0 ? -1 : 0));
-    const nextGridY = currentGridY + (velocityY > 0 ? 1 : (velocityY < 0 ? -1 : 0));
-
-    // Check if next position is a wall
-    if (isWallAt(nextGridX, nextGridY)) {
-        // Stop at current grid position
-        player.body.setVelocity(0, 0);
-        snapToGrid();
-        console.log('Hit wall! Stopped.');
-    } else {
-        // Continue moving
-        player.body.setVelocity(velocityX, velocityY);
+        queuedDirection = 'right';
+        console.log('Queued: RIGHT');
     }
 }
 
-function snapToGrid() {
-    const gridX = Math.round(player.x / GRID_SIZE);
-    const gridY = Math.round(player.y / GRID_SIZE);
-    player.setPosition(gridX * GRID_SIZE, gridY * GRID_SIZE);
+function startMovement() {
+    if (isMoving) return;
+
+    // Try queued direction first, then continue current direction
+    const directionToTry = queuedDirection || currentDirection;
+
+    // Calculate target grid position
+    let targetGridX = currentGridX;
+    let targetGridY = currentGridY;
+
+    switch(directionToTry) {
+        case 'up': targetGridY--; break;
+        case 'down': targetGridY++; break;
+        case 'left': targetGridX--; break;
+        case 'right': targetGridX++; break;
+    }
+
+    // Check if target is valid (not a wall)
+    if (isWallAt(targetGridX, targetGridY)) {
+        // Can't move in queued direction, try current direction
+        if (queuedDirection && queuedDirection !== currentDirection) {
+            queuedDirection = null;
+            startMovement.call(this);
+            return;
+        }
+        // Blocked - stop moving
+        isMoving = false;
+        queuedDirection = null;
+        console.log('Blocked! Stopped at', currentGridX, currentGridY);
+        return;
+    }
+
+    // Valid move - apply queued direction if any
+    if (queuedDirection) {
+        currentDirection = queuedDirection;
+        queuedDirection = null;
+        console.log('Changed direction to:', currentDirection);
+    }
+
+    // Start movement tween
+    isMoving = true;
+    currentGridX = targetGridX;
+    currentGridY = targetGridY;
+
+    const targetPixelX = targetGridX * GRID_SIZE + GRID_SIZE/2;
+    const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
+
+    console.log(`Moving to grid(${targetGridX},${targetGridY}) pixel(${targetPixelX},${targetPixelY})`);
+
+    // Smooth tween with 4 steps
+    movementTween = this.tweens.add({
+        targets: player,
+        x: targetPixelX,
+        y: targetPixelY,
+        duration: MOVE_DURATION,
+        ease: 'Linear',
+        onComplete: () => {
+            isMoving = false;
+            startMovement.call(this); // Continue moving
+        }
+    });
 }
 
 function isWallAt(gridX, gridY) {
@@ -378,4 +370,4 @@ function hitHazard(player, hazard) {
     this.cameras.main.shake(300, 0.01);
 }
 
-console.log('🎮 main.js loaded completely');
+console.log('🎮 main.js loaded');
