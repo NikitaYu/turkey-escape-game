@@ -1,5 +1,5 @@
 // ============================================================
-// TURKEY ESCAPE - Triangle Sprite + Working Pulsation
+// TURKEY ESCAPE - Clean Grid-Based Movement
 // ============================================================
 
 console.log('🎮 main.js loading...');
@@ -7,17 +7,17 @@ console.log('🎮 main.js loading...');
 // GRID SPECS
 const GRID_SIZE = 64;
 const PLAYER_SIZE = 60;
-const MOVE_DURATION = 1000;
+const MOVE_DURATION = 1000; // 1 cell per second
 
-// PULSATION SPECS (redraw-based, not scale-based)
-const PULSE_IDLE_RATE = 1; // 1 pulse per second
-const PULSE_MOVE_RATE = 4; // 4 pulses per second
-const SIZE_MIN = 0.80; // 80% of normal size
-const SIZE_MAX = 1.00; // 100% (normal)
+// PULSATION SPECS
+const PULSE_IDLE_RATE = 1;  // 1 pulse per second
+const PULSE_MOVE_RATE = 4;  // 4 pulses per second
+const SIZE_MIN = 0.80;      // 80% of normal
+const SIZE_MAX = 1.00;      // 100% normal
 
 // TRIANGLE SPECS
-const TRI_HEIGHT = 30; // Forward point to back
-const TRI_BACK_WIDTH = 21; // Back side (70% of height)
+const TRI_HEIGHT = 30;
+const TRI_BACK_WIDTH = 21; // 70% of height
 
 // INPUT QUEUE
 const QUEUE_TIMEOUT_CELLS = 2;
@@ -31,7 +31,7 @@ const config = {
         default: 'arcade',
         arcade: {
             gravity: { y: 0 },
-            debug: false  // DISABLED - was showing pink physics body
+            debug: false
         }
     },
     scene: {
@@ -43,40 +43,32 @@ const config = {
 
 const game = new Phaser.Game(config);
 
-// Game state
+// Global state
 let scene;
 let player;
 let playerGraphics;
-let cursors;
 let keys;
 let walls;
 let hazards;
-let lives = 3;
-let livesIcons = [];
-let timerText;
-let levelText;
-let debugText;
-let timeRemaining = 90;
-let updateCount = 0;
 
 // Movement state
-let currentGridX = 0;
-let currentGridY = 0;
-let currentDirection = 'up';
-let queuedDirection = null;
+let gridX = 0;
+let gridY = 0;
+let facing = 'up';
+let queuedInput = null;
 let queueAge = 0;
 let isMoving = false;
-let movementTween = null;
-let stoppedByPlayer = false; // For STOP input feature
+let isStopped = false;
 
 // Pulsation state
-let pulsePhase = 0; // 0 to 1 (breathing cycle)
-let pulseDirection = 1; // 1 = growing, -1 = shrinking
-let pulseRate = PULSE_IDLE_RATE;
+let pulsePhase = 0;
 let currentSize = SIZE_MAX;
 
-// Level
-const LEVEL_1 = [
+// UI
+let debugText;
+
+// Level map
+const LEVEL = [
     [1,1,1,1,1,1,1,1,1,1,1,1],
     [1,0,0,0,0,0,4,0,0,0,0,1],
     [1,0,1,1,1,1,0,1,1,1,0,1],
@@ -92,81 +84,96 @@ const LEVEL_1 = [
 
 function preload() {
     console.log('📦 PRELOAD');
-    log('preload-check', '✓ Preload');
 }
 
 function create() {
     console.log('🎨 CREATE');
     scene = this;
 
-    try {
-        const testText = this.add.text(400, 30, 'GRID-BASED MOVEMENT', {
-            fontSize: '18px',
-            fill: '#00FF00',
-            fontFamily: 'monospace'
-        });
-        testText.setOrigin(0.5);
-        testText.setScrollFactor(0);
+    // Title
+    const title = this.add.text(400, 30, 'TURKEY ESCAPE - Grid Movement', {
+        fontSize: '18px',
+        fill: '#00FF00',
+        fontFamily: 'monospace'
+    });
+    title.setOrigin(0.5);
+    title.setScrollFactor(0);
 
-        walls = this.physics.add.staticGroup();
-        hazards = this.physics.add.group();
+    // Create groups
+    walls = this.physics.add.staticGroup();
+    hazards = this.physics.add.group();
 
-        // Create player container (for physics)
-        player = this.add.container(0, 0);
-        this.physics.world.enable(player);
-        player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
-        player.body.setOffset(-PLAYER_SIZE/2, -PLAYER_SIZE/2);
+    // Create player container (for physics)
+    player = this.add.container(0, 0);
+    this.physics.world.enable(player);
+    player.body.setSize(PLAYER_SIZE, PLAYER_SIZE);
+    player.body.setOffset(-PLAYER_SIZE/2, -PLAYER_SIZE/2);
 
-        // Create graphics for triangle (separate, not in container)
-        playerGraphics = this.add.graphics();
-        playerGraphics.setDepth(100); // Render on top
+    // Create graphics for triangle
+    playerGraphics = this.add.graphics();
+    playerGraphics.setDepth(100);
 
-        // Draw initial triangle
-        console.log('🔺 Drawing initial triangle...');
-        drawPlayerTriangle();
+    // Input
+    keys = this.input.keyboard.addKeys({
+        W: Phaser.Input.Keyboard.KeyCodes.W,
+        A: Phaser.Input.Keyboard.KeyCodes.A,
+        S: Phaser.Input.Keyboard.KeyCodes.S,
+        D: Phaser.Input.Keyboard.KeyCodes.D,
+        UP: Phaser.Input.Keyboard.KeyCodes.UP,
+        LEFT: Phaser.Input.Keyboard.KeyCodes.LEFT,
+        DOWN: Phaser.Input.Keyboard.KeyCodes.DOWN,
+        RIGHT: Phaser.Input.Keyboard.KeyCodes.RIGHT
+    });
 
-        // Input
-        cursors = this.input.keyboard.createCursorKeys();
-        keys = this.input.keyboard.addKeys({
-            W: Phaser.Input.Keyboard.KeyCodes.W,
-            A: Phaser.Input.Keyboard.KeyCodes.A,
-            S: Phaser.Input.Keyboard.KeyCodes.S,
-            D: Phaser.Input.Keyboard.KeyCodes.D
-        });
+    // Build level
+    buildLevel.call(this);
 
-        buildLevel.call(this, LEVEL_1);
-        createUI.call(this);
+    // Create UI
+    const instructions = this.add.text(400, 570, 'WASD: Move | Opposite direction = STOP (2x to reverse)', {
+        fontSize: '13px',
+        fill: '#FFFFFF',
+        fontFamily: 'monospace'
+    });
+    instructions.setOrigin(0.5, 0);
+    instructions.setScrollFactor(0);
 
-        this.physics.add.collider(player, walls);
-        this.physics.add.overlap(player, hazards, hitHazard, null, this);
+    debugText = this.add.text(10, 50, '', {
+        fontSize: '12px',
+        fill: '#00FF00',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000',
+        padding: { x: 8, y: 8 }
+    });
+    debugText.setScrollFactor(0);
+    debugText.setDepth(200);
 
-        this.cameras.main.startFollow(player, true, 0.08, 0.08);
-        this.cameras.main.setZoom(1.2);
+    // Camera
+    this.cameras.main.startFollow(player, true, 0.08, 0.08);
+    this.cameras.main.setZoom(1.2);
 
-        currentDirection = 'up';
-        setPulseRate('idle');
+    // Collisions
+    this.physics.add.collider(player, walls);
 
-        console.log('✅ CREATE COMPLETE');
-        log('create-check', '✓ Ready!');
+    // Draw initial triangle
+    drawTriangle();
 
-    } catch (error) {
-        console.error('❌ ERROR:', error);
-        log('create-check', '✗ ERROR: ' + error.message, false);
-    }
+    console.log('✅ CREATE COMPLETE - Player at grid (' + gridX + ',' + gridY + ')');
 }
 
-function buildLevel(map) {
-    for (let y = 0; y < map.length; y++) {
-        for (let x = 0; x < map[y].length; x++) {
-            const tile = map[y][x];
+function buildLevel() {
+    for (let y = 0; y < LEVEL.length; y++) {
+        for (let x = 0; x < LEVEL[y].length; x++) {
+            const tile = LEVEL[y][x];
             const px = x * GRID_SIZE;
             const py = y * GRID_SIZE;
 
             if (tile === 0) {
+                // Floor
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
             } else if (tile === 1) {
+                // Wall
                 const wallGfx = this.add.graphics();
                 wallGfx.fillStyle(0x666666, 1);
                 wallGfx.lineStyle(2, 0x888888, 1);
@@ -178,217 +185,230 @@ function buildLevel(map) {
                 wall.setVisible(false);
                 wall.refreshBody();
             } else if (tile === 2) {
+                // Hazard
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
 
-                const hazard = this.add.container(px + GRID_SIZE/2, py + GRID_SIZE/2);
-                this.physics.world.enable(hazard);
-                hazard.body.setSize(40, 40);
-
-                const hgfx = this.add.graphics();
-                hgfx.fillStyle(0xFF0000, 1);
-                hgfx.fillCircle(0, 0, 20);
-                hazard.add(hgfx);
-                hazards.add(hazard);
+                const hazard = this.add.graphics();
+                hazard.fillStyle(0xFF0000, 1);
+                hazard.fillCircle(px + GRID_SIZE/2, py + GRID_SIZE/2, 20);
             } else if (tile === 3) {
+                // Start position
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
 
-                currentGridX = x;
-                currentGridY = y;
+                gridX = x;
+                gridY = y;
                 player.setPosition(px + GRID_SIZE/2, py + GRID_SIZE/2);
             } else if (tile === 4) {
+                // Exit
                 const floor = this.add.graphics();
                 floor.fillStyle(0x222222, 1);
                 floor.fillRect(px, py, GRID_SIZE, GRID_SIZE);
 
                 const exit = this.add.graphics();
                 exit.lineStyle(4, 0x00FF00, 1);
-                exit.strokeRect(px + 6, py + 6, GRID_SIZE - 12, GRID_SIZE - 12);
+                exit.strokeRect(px + 8, py + 8, GRID_SIZE - 16, GRID_SIZE - 16);
             }
         }
     }
 }
 
-function createUI() {
-    for (let i = 0; i < 3; i++) {
-        const icon = this.add.graphics();
-        icon.setScrollFactor(0);
-        icon.setPosition(30 + i * 30, 30);
-        drawLifeIcon(icon, true);
-        livesIcons.push(icon);
-    }
-
-    timerText = this.add.text(760, 20, '90', {
-        fontSize: '24px',
-        fill: '#FFFFFF',
-        fontFamily: 'monospace'
-    });
-    timerText.setOrigin(1, 0);
-    timerText.setScrollFactor(0);
-
-    levelText = this.add.text(400, 570, 'WASD: Move | Opposite = STOP at grid center (2x to reverse)', {
-        fontSize: '14px',
-        fill: '#FFFFFF',
-        fontFamily: 'monospace'
-    });
-    levelText.setOrigin(0.5, 0);
-    levelText.setScrollFactor(0);
-
-    debugText = this.add.text(850, 50, '', {
-        fontSize: '13px',
-        fill: '#00FF00',
-        fontFamily: 'monospace',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 10 }
-    });
-    debugText.setScrollFactor(0);
-}
-
-function drawLifeIcon(icon, full) {
-    icon.clear();
-    if (full) {
-        icon.fillStyle(0xFF4500, 1);
-        icon.lineStyle(2, 0xCC3700, 1);
-    } else {
-        icon.fillStyle(0x000000, 0);
-        icon.lineStyle(2, 0xFFFFFF, 1);
-    }
-    icon.fillRect(0, 0, 16, 16);
-    icon.strokeRect(0, 0, 16, 16);
-}
-
 function update(time, delta) {
-    updateCount++;
-
-    if (updateCount === 1) {
-        log('update-check', '✓ Running');
-    }
-
     if (!player) return;
 
+    // Handle input - just queue it
     handleInput();
 
-    // Try to move when idle
-    // If stopped, only try to move when there's a new queued input
-    const shouldMove = !isMoving && (!stoppedByPlayer || queuedDirection);
-    if (updateCount % 60 === 0) {  // Log every 60 frames (~1 second)
-        console.log(`[UPDATE] isMoving: ${isMoving}, stopped: ${stoppedByPlayer}, queued: ${queuedDirection}, shouldMove: ${shouldMove}`);
-    }
-    if (shouldMove) {
-        startMovement();
+    // Try to start movement when at grid center
+    if (!isMoving && !isStopped) {
+        tryStartMovement();
+    } else if (!isMoving && isStopped && queuedInput) {
+        // Stopped but got new input - try to process it
+        tryStartMovement();
     }
 
-    // Update pulsation (breathing animation)
+    // Update pulsation animation
     updatePulsation(delta);
 
-    // Debug
-    if (debugText) {
-        debugText.setText(
-            `=== DEBUG ===\n` +
-            `Grid: (${currentGridX},${currentGridY})\n` +
-            `Direction: ${currentDirection}\n` +
-            `Queued: ${queuedDirection || 'none'}\n` +
-            `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS}\n` +
-            `Moving: ${isMoving}\n` +
-            `Stopped: ${stoppedByPlayer}\n` +
-            `Pulse: ${pulseRate}/sec\n` +
-            `Size: ${(currentSize * 100).toFixed(0)}%`
-        );
-    }
-
-    // Timer
-    if (timeRemaining > 0) {
-        timeRemaining -= delta / 1000;
-        timerText.setText(Math.ceil(timeRemaining).toString());
-    }
+    // Update debug display
+    updateDebug();
 }
 
 function handleInput() {
-    // ONLY queue inputs - don't execute anything mid-movement
-    // All actions happen at grid centers
-
-    if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
-        queuedDirection = 'up';
+    // Just queue the input - don't execute anything
+    if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP)) {
+        queuedInput = 'up';
         queueAge = 0;
         console.log('[INPUT] Queued: UP');
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(cursors.down)) {
-        queuedDirection = 'down';
+    if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(keys.DOWN)) {
+        queuedInput = 'down';
         queueAge = 0;
         console.log('[INPUT] Queued: DOWN');
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(cursors.left)) {
-        queuedDirection = 'left';
+    if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(keys.LEFT)) {
+        queuedInput = 'left';
         queueAge = 0;
         console.log('[INPUT] Queued: LEFT');
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(cursors.right)) {
-        queuedDirection = 'right';
+    if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(keys.RIGHT)) {
+        queuedInput = 'right';
         queueAge = 0;
         console.log('[INPUT] Queued: RIGHT');
     }
 }
 
-function updatePulsation(delta) {
-    // Update breathing cycle
-    const deltaSeconds = delta / 1000;
-    pulsePhase += deltaSeconds * pulseRate;
+function tryStartMovement() {
+    // Age out old queued inputs
+    if (queueAge >= QUEUE_TIMEOUT_CELLS && queuedInput) {
+        console.log('[TIMEOUT] Dismissed queued input: ' + queuedInput);
+        queuedInput = null;
+        queueAge = 0;
+    }
 
-    // Oscillate between SIZE_MIN and SIZE_MAX using sine wave
-    // sin goes from -1 to 1, we map to SIZE_MIN to SIZE_MAX
+    // Determine which direction to try
+    let dirToTry = queuedInput || facing;
+
+    // STOP FEATURE: Check if input is opposite to current facing
+    if (queuedInput && isOpposite(facing, queuedInput)) {
+        if (!isStopped) {
+            // First opposite input = STOP
+            console.log('[STOP] Stopped at grid center (' + gridX + ',' + gridY + ')');
+            isStopped = true;
+            queuedInput = null;
+            queueAge = 0;
+            return; // Don't move
+        } else {
+            // Second opposite input = reverse direction
+            console.log('[REVERSE] Turning 180 degrees');
+            isStopped = false;
+            // dirToTry is already the opposite direction, continue below
+        }
+    }
+
+    // Calculate target cell
+    let targetX = gridX;
+    let targetY = gridY;
+
+    switch(dirToTry) {
+        case 'up': targetY--; break;
+        case 'down': targetY++; break;
+        case 'left': targetX--; break;
+        case 'right': targetX++; break;
+    }
+
+    // Check if target is blocked
+    if (isWall(targetX, targetY)) {
+        // Can't move there
+        if (queuedInput && queuedInput !== facing) {
+            queueAge++;
+            console.log('[BLOCKED] Queued input blocked, age: ' + queueAge);
+        }
+        return;
+    }
+
+    // Valid move! Apply queued input if any
+    if (queuedInput) {
+        facing = queuedInput;
+        queuedInput = null;
+        queueAge = 0;
+        isStopped = false;
+        drawTriangle(); // Rotate sprite
+        console.log('[TURN] Now facing: ' + facing);
+    } else if (isStopped) {
+        // Resume in same direction
+        isStopped = false;
+        console.log('[RESUME] Continuing ' + facing);
+    }
+
+    // Start movement to target cell
+    isMoving = true;
+    gridX = targetX;
+    gridY = targetY;
+
+    const targetPx = targetX * GRID_SIZE + GRID_SIZE / 2;
+    const targetPy = targetY * GRID_SIZE + GRID_SIZE / 2;
+
+    console.log('[MOVE] Grid (' + gridX + ',' + gridY + ') → Pixel (' + targetPx + ',' + targetPy + ')');
+
+    scene.tweens.add({
+        targets: player,
+        x: targetPx,
+        y: targetPy,
+        duration: MOVE_DURATION,
+        ease: 'Linear',
+        onComplete: () => {
+            isMoving = false;
+            console.log('[ARRIVE] Reached grid center (' + gridX + ',' + gridY + ')');
+            if (queuedInput) queueAge++;
+        }
+    });
+}
+
+function isOpposite(dir1, dir2) {
+    return (dir1 === 'up' && dir2 === 'down') ||
+           (dir1 === 'down' && dir2 === 'up') ||
+           (dir1 === 'left' && dir2 === 'right') ||
+           (dir1 === 'right' && dir2 === 'left');
+}
+
+function isWall(x, y) {
+    if (y < 0 || y >= LEVEL.length) return true;
+    if (x < 0 || x >= LEVEL[0].length) return true;
+    return LEVEL[y][x] === 1;
+}
+
+function updatePulsation(delta) {
+    const deltaSeconds = delta / 1000;
+    const rate = isMoving ? PULSE_MOVE_RATE : PULSE_IDLE_RATE;
+    pulsePhase += deltaSeconds * rate;
+
+    // Map sine wave to 80-100% size
     currentSize = SIZE_MIN + (SIZE_MAX - SIZE_MIN) * (Math.sin(pulsePhase * Math.PI * 2) * 0.5 + 0.5);
 
     // Redraw triangle at new size
-    drawPlayerTriangle();
+    drawTriangle();
 }
 
-function drawPlayerTriangle() {
+function drawTriangle() {
     if (!playerGraphics || !player) return;
 
     playerGraphics.clear();
 
-    // Position graphics at player location
     const px = player.x;
     const py = player.y;
+    const h = TRI_HEIGHT * currentSize;
+    const w = TRI_BACK_WIDTH * currentSize;
 
-    // Calculate scaled dimensions
-    const height = TRI_HEIGHT * currentSize;
-    const backWidth = TRI_BACK_WIDTH * currentSize;
+    // Orange colors
+    playerGraphics.fillStyle(0xFF4500, 1);
+    playerGraphics.lineStyle(3, 0xCC3700, 1);
 
-    // Set colors - ORANGE!
-    playerGraphics.fillStyle(0xFF4500, 1); // Orange fill
-    playerGraphics.lineStyle(3, 0xCC3700, 1); // Darker orange stroke
-
-    // Draw triangle pointing in current direction
     playerGraphics.beginPath();
 
-    switch(currentDirection) {
+    switch(facing) {
         case 'up':
-            // Point up
-            playerGraphics.moveTo(px, py - height/2);           // Top point
-            playerGraphics.lineTo(px - backWidth/2, py + height/2); // Bottom left
-            playerGraphics.lineTo(px + backWidth/2, py + height/2);  // Bottom right
+            playerGraphics.moveTo(px, py - h/2);
+            playerGraphics.lineTo(px - w/2, py + h/2);
+            playerGraphics.lineTo(px + w/2, py + h/2);
             break;
         case 'down':
-            // Point down
-            playerGraphics.moveTo(px, py + height/2);            // Bottom point
-            playerGraphics.lineTo(px - backWidth/2, py - height/2);// Top left
-            playerGraphics.lineTo(px + backWidth/2, py - height/2); // Top right
+            playerGraphics.moveTo(px, py + h/2);
+            playerGraphics.lineTo(px - w/2, py - h/2);
+            playerGraphics.lineTo(px + w/2, py - h/2);
             break;
         case 'left':
-            // Point left
-            playerGraphics.moveTo(px - height/2, py);           // Left point
-            playerGraphics.lineTo(px + height/2, py - backWidth/2); // Top right
-            playerGraphics.lineTo(px + height/2, py + backWidth/2);  // Bottom right
+            playerGraphics.moveTo(px - h/2, py);
+            playerGraphics.lineTo(px + h/2, py - w/2);
+            playerGraphics.lineTo(px + h/2, py + w/2);
             break;
         case 'right':
-            // Point right
-            playerGraphics.moveTo(px + height/2, py);            // Right point
-            playerGraphics.lineTo(px - height/2, py - backWidth/2);// Top left
-            playerGraphics.lineTo(px - height/2, py + backWidth/2); // Bottom left
+            playerGraphics.moveTo(px + h/2, py);
+            playerGraphics.lineTo(px - h/2, py - w/2);
+            playerGraphics.lineTo(px - h/2, py + w/2);
             break;
     }
 
@@ -397,133 +417,18 @@ function drawPlayerTriangle() {
     playerGraphics.strokePath();
 }
 
-function setPulseRate(mode) {
-    pulseRate = mode === 'idle' ? PULSE_IDLE_RATE : PULSE_MOVE_RATE;
-    console.log(`[PULSE] ${mode} mode: ${pulseRate} pulses/sec`);
-}
+function updateDebug() {
+    if (!debugText) return;
 
-function startMovement() {
-    console.log(`[START_MOVEMENT] Called - isMoving: ${isMoving}, stopped: ${stoppedByPlayer}, queued: ${queuedDirection}, current: ${currentDirection}`);
-
-    if (isMoving) return;
-
-    // Helper to check if direction is opposite
-    const isOpposite = (dir1, dir2) => {
-        return (dir1 === 'up' && dir2 === 'down') ||
-               (dir1 === 'down' && dir2 === 'up') ||
-               (dir1 === 'left' && dir2 === 'right') ||
-               (dir1 === 'right' && dir2 === 'left');
-    };
-
-    // Age out queue
-    if (queueAge >= QUEUE_TIMEOUT_CELLS && queuedDirection) {
-        console.log(`[TIMEOUT] Dismissed ${queuedDirection}`);
-        queuedDirection = null;
-        queueAge = 0;
-    }
-
-    // STOP FEATURE: Check if queued direction is opposite
-    if (queuedDirection && isOpposite(currentDirection, queuedDirection)) {
-        if (!stoppedByPlayer) {
-            // First opposite press = STOP
-            console.log(`[STOP] Player stopped at grid center (${currentGridX}, ${currentGridY})`);
-            stoppedByPlayer = true;
-            queuedDirection = null;
-            queueAge = 0;
-            setPulseRate('idle');
-            // Don't rotate sprite - keep facing current direction
-            return;
-        } else {
-            // Second opposite press = turn 180 and move
-            console.log(`[180° TURN] Reversing direction`);
-            stoppedByPlayer = false;
-            // Continue to normal turn logic below
-        }
-    }
-
-    const directionToTry = queuedDirection || currentDirection;
-
-    let targetGridX = currentGridX;
-    let targetGridY = currentGridY;
-
-    switch(directionToTry) {
-        case 'up': targetGridY--; break;
-        case 'down': targetGridY++; break;
-        case 'left': targetGridX--; break;
-        case 'right': targetGridX++; break;
-    }
-
-    const isWall = isWallAt(targetGridX, targetGridY);
-
-    if (isWall) {
-        if (queuedDirection && queuedDirection !== currentDirection) {
-            queueAge++;
-            console.log(`[BLOCKED] Queued ${queuedDirection}, age ${queueAge}/${QUEUE_TIMEOUT_CELLS}`);
-            return;
-        }
-        setPulseRate('idle');
-        return;
-    }
-
-    // Apply queued direction (turn)
-    if (queuedDirection) {
-        currentDirection = queuedDirection;
-        queuedDirection = null;
-        queueAge = 0;
-        stoppedByPlayer = false; // Clear stopped state when moving
-        drawPlayerTriangle(); // Rotate triangle
-        console.log(`[TURN] Now moving: ${currentDirection}`);
-    } else if (stoppedByPlayer) {
-        // Trying to resume in same direction while stopped
-        stoppedByPlayer = false;
-        console.log(`[RESUME] Continuing ${currentDirection}`);
-    }
-
-    isMoving = true;
-    currentGridX = targetGridX;
-    currentGridY = targetGridY;
-
-    const targetPixelX = targetGridX * GRID_SIZE + GRID_SIZE/2;
-    const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
-
-    setPulseRate('moving');
-
-    console.log(`[TWEEN] Creating tween - scene exists: ${!!scene}, target: (${targetPixelX}, ${targetPixelY})`);
-
-    if (!scene) {
-        console.error('[ERROR] scene is undefined!');
-        return;
-    }
-
-    movementTween = scene.tweens.add({
-        targets: player,
-        x: targetPixelX,
-        y: targetPixelY,
-        duration: MOVE_DURATION,
-        ease: 'Linear',
-        onComplete: () => {
-            isMoving = false;
-            if (queuedDirection) queueAge++;
-        }
-    });
-}
-
-function isWallAt(gridX, gridY) {
-    if (gridY < 0 || gridY >= LEVEL_1.length) return true;
-    if (gridX < 0 || gridX >= LEVEL_1[0].length) return true;
-    return LEVEL_1[gridY][gridX] === 1;
-}
-
-function hitHazard(player, hazard) {
-    console.log('[HAZARD]');
-    hazard.destroy();
-    lives--;
-
-    if (lives >= 0 && lives < livesIcons.length) {
-        drawLifeIcon(livesIcons[lives], false);
-    }
-
-    scene.cameras.main.shake(300, 0.01);
+    debugText.setText(
+        `Grid: (${gridX}, ${gridY})\n` +
+        `Facing: ${facing}\n` +
+        `Queued: ${queuedInput || 'none'}\n` +
+        `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS}\n` +
+        `Moving: ${isMoving}\n` +
+        `Stopped: ${isStopped}\n` +
+        `Size: ${(currentSize * 100).toFixed(0)}%`
+    );
 }
 
 console.log('🎮 main.js loaded');
