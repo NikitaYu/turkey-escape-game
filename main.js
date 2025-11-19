@@ -34,6 +34,7 @@ console.log('🎮 Creating game instance...');
 const game = new Phaser.Game(config);
 
 // Game state
+let scene; // Store scene reference
 let player;
 let playerGraphics;
 let cursors;
@@ -78,6 +79,9 @@ function preload() {
 function create() {
     console.log('🎨 CREATE started');
     log('create-check', '✓ Create running');
+
+    // Store scene reference for later use
+    scene = this;
 
     try {
         // Test elements
@@ -134,7 +138,7 @@ function create() {
 
         // Start moving up
         currentDirection = 'up';
-        startMovement.call(this);
+        startMovement();
 
         console.log('✅ CREATE COMPLETE');
         log('create-check', '✓ Grid movement ready!');
@@ -311,7 +315,7 @@ function startMovement() {
         // Can't move in queued direction, try current direction
         if (queuedDirection && queuedDirection !== currentDirection) {
             queuedDirection = null;
-            startMovement.call(this);
+            startMovement();
             return;
         }
         // Blocked - stop moving
@@ -338,8 +342,8 @@ function startMovement() {
 
     console.log(`Moving to grid(${targetGridX},${targetGridY}) pixel(${targetPixelX},${targetPixelY})`);
 
-    // Smooth tween with 4 steps
-    movementTween = this.tweens.add({
+    // Smooth tween - use stored scene reference
+    movementTween = scene.tweens.add({
         targets: player,
         x: targetPixelX,
         y: targetPixelY,
@@ -347,7 +351,7 @@ function startMovement() {
         ease: 'Linear',
         onComplete: () => {
             isMoving = false;
-            startMovement.call(this); // Continue moving
+            startMovement(); // Continue moving
         }
     });
 }
@@ -367,7 +371,7 @@ function hitHazard(player, hazard) {
         drawLifeIcon(livesIcons[lives], false);
     }
 
-    this.cameras.main.shake(300, 0.01);
+    scene.cameras.main.shake(300, 0.01);
 }
 
 console.log('🎮 main.js loaded');
