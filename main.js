@@ -100,7 +100,7 @@ function create() {
     scene = this;
 
     try {
-        const testText = this.add.text(400, 30, 'TRIANGLE + BREATHING', {
+        const testText = this.add.text(400, 30, 'GRID-BASED MOVEMENT', {
             fontSize: '18px',
             fill: '#00FF00',
             fontFamily: 'monospace'
@@ -229,7 +229,7 @@ function createUI() {
     timerText.setOrigin(1, 0);
     timerText.setScrollFactor(0);
 
-    levelText = this.add.text(400, 570, 'WASD: Move | Opposite = STOP (press twice to reverse)', {
+    levelText = this.add.text(400, 570, 'WASD: Move | Opposite = STOP at grid center (2x to reverse)', {
         fontSize: '14px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
@@ -302,99 +302,28 @@ function update(time, delta) {
 }
 
 function handleInput() {
-    // Helper to check if direction is opposite
-    const isOpposite = (dir1, dir2) => {
-        return (dir1 === 'up' && dir2 === 'down') ||
-               (dir1 === 'down' && dir2 === 'up') ||
-               (dir1 === 'left' && dir2 === 'right') ||
-               (dir1 === 'right' && dir2 === 'left');
-    };
+    // ONLY queue inputs - don't execute anything mid-movement
+    // All actions happen at grid centers
 
-    // Helper to snap player to grid center (fixes drift)
-    const snapToGrid = () => {
-        player.x = currentGridX * GRID_SIZE + GRID_SIZE / 2;
-        player.y = currentGridY * GRID_SIZE + GRID_SIZE / 2;
-        console.log(`[SNAP] Aligned to grid (${currentGridX}, ${currentGridY})`);
-    };
-
-    // Helper to try instant direction change or stop
-    const tryInstantTurn = (newDirection) => {
-        // STOP FEATURE: First opposite input while moving = STOP (don't turn)
-        if (isMoving && isOpposite(currentDirection, newDirection) && !stoppedByPlayer) {
-            console.log('[STOP] Player stopped (opposite input)');
-
-            // Stop tween and snap to grid center
-            if (movementTween) {
-                movementTween.stop();
-            }
-            isMoving = false;
-            stoppedByPlayer = true;
-
-            snapToGrid(); // Fix grid drift
-            setPulseRate('idle');
-
-            // Don't rotate sprite - keep facing current direction
-            return;
-        }
-
-        // Already going that direction
-        if (newDirection === currentDirection && !stoppedByPlayer) {
-            return;
-        }
-
-        // Check if new direction is valid (not blocked)
-        let testGridX = currentGridX;
-        let testGridY = currentGridY;
-
-        switch(newDirection) {
-            case 'up': testGridY--; break;
-            case 'down': testGridY++; break;
-            case 'left': testGridX--; break;
-            case 'right': testGridX++; break;
-        }
-
-        const isBlocked = isWallAt(testGridX, testGridY);
-
-        if (!isBlocked) {
-            // INSTANT TURN - direction is valid!
-            console.log(`[INSTANT TURN] ${currentDirection} → ${newDirection} (valid path)`);
-
-            // Cancel current movement if any and snap to grid
-            if (isMoving && movementTween) {
-                movementTween.stop();
-                isMoving = false;
-                snapToGrid(); // Fix grid drift
-            }
-
-            // Change direction immediately
-            currentDirection = newDirection;
-            stoppedByPlayer = false; // Clear stopped state
-            queuedDirection = null;
-            queueAge = 0;
-            drawPlayerTriangle(); // Rotate triangle instantly
-
-            // Start moving in new direction immediately
-            startMovement();
-        } else {
-            // Blocked - queue it
-            console.log(`[QUEUE] ${newDirection} blocked, queuing for 2 cells`);
-            queuedDirection = newDirection;
-            queueAge = 0;
-        }
-    };
-
-    // Check each direction input
     if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
-        tryInstantTurn('up');
+        queuedDirection = 'up';
+        queueAge = 0;
+        console.log('[INPUT] Queued: UP');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(cursors.down)) {
-        tryInstantTurn('down');
+        queuedDirection = 'down';
+        queueAge = 0;
+        console.log('[INPUT] Queued: DOWN');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(cursors.left)) {
-        tryInstantTurn('left');
+        queuedDirection = 'left';
+        queueAge = 0;
+        console.log('[INPUT] Queued: LEFT');
     }
     if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(cursors.right)) {
-        tryInstantTurn('right');
+        queuedDirection = 'right';
+        queueAge = 0;
+        console.log('[INPUT] Queued: RIGHT');
     }
 }
 
@@ -471,11 +400,38 @@ function setPulseRate(mode) {
 function startMovement() {
     if (isMoving) return;
 
+    // Helper to check if direction is opposite
+    const isOpposite = (dir1, dir2) => {
+        return (dir1 === 'up' && dir2 === 'down') ||
+               (dir1 === 'down' && dir2 === 'up') ||
+               (dir1 === 'left' && dir2 === 'right') ||
+               (dir1 === 'right' && dir2 === 'left');
+    };
+
     // Age out queue
     if (queueAge >= QUEUE_TIMEOUT_CELLS && queuedDirection) {
         console.log(`[TIMEOUT] Dismissed ${queuedDirection}`);
         queuedDirection = null;
         queueAge = 0;
+    }
+
+    // STOP FEATURE: Check if queued direction is opposite
+    if (queuedDirection && isOpposite(currentDirection, queuedDirection)) {
+        if (!stoppedByPlayer) {
+            // First opposite press = STOP
+            console.log(`[STOP] Player stopped at grid center (${currentGridX}, ${currentGridY})`);
+            stoppedByPlayer = true;
+            queuedDirection = null;
+            queueAge = 0;
+            setPulseRate('idle');
+            // Don't rotate sprite - keep facing current direction
+            return;
+        } else {
+            // Second opposite press = turn 180 and move
+            console.log(`[180° TURN] Reversing direction`);
+            stoppedByPlayer = false;
+            // Continue to normal turn logic below
+        }
     }
 
     const directionToTry = queuedDirection || currentDirection;
@@ -502,13 +458,18 @@ function startMovement() {
         return;
     }
 
-    // Apply queued direction
+    // Apply queued direction (turn)
     if (queuedDirection) {
         currentDirection = queuedDirection;
         queuedDirection = null;
         queueAge = 0;
+        stoppedByPlayer = false; // Clear stopped state when moving
         drawPlayerTriangle(); // Rotate triangle
         console.log(`[TURN] Now moving: ${currentDirection}`);
+    } else if (stoppedByPlayer) {
+        // Trying to resume in same direction while stopped
+        stoppedByPlayer = false;
+        console.log(`[RESUME] Continuing ${currentDirection}`);
     }
 
     isMoving = true;
