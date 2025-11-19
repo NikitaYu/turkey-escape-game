@@ -271,8 +271,9 @@ function update(time, delta) {
 
     handleInput();
 
-    // Try to move when idle (but not if player manually stopped)
-    if (!isMoving && !stoppedByPlayer) {
+    // Try to move when idle
+    // If stopped, only try to move when there's a new queued input
+    if (!isMoving && (!stoppedByPlayer || queuedDirection)) {
         startMovement();
     }
 
