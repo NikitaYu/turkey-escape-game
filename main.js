@@ -1,5 +1,5 @@
 // ============================================================
-// TURKEY ESCAPE - Classic Grid Movement (Pac-Man Style)
+// TURKEY ESCAPE - Classic Grid Movement (FIXED + Pulsation)
 // ============================================================
 
 console.log('🎮 main.js loading...');
@@ -10,6 +10,12 @@ const PLAYER_SIZE = 60; // Visible sprite (64px total with 4px padding)
 const MOVE_DURATION = 1000; // 1 cell per second
 const STEPS_PER_CELL = 4; // 4 animation steps per cell
 const STEP_DURATION = MOVE_DURATION / STEPS_PER_CELL; // 250ms per step
+
+// PULSATION SPECS
+const PULSE_IDLE_DURATION = 500; // 2 pulses per second when idle (breathing)
+const PULSE_MOVE_DURATION = 250; // 4 pulses per second when moving (steps)
+const PULSE_SCALE_MIN = 0.95;
+const PULSE_SCALE_MAX = 1.05;
 
 const config = {
     type: Phaser.AUTO,
@@ -56,6 +62,7 @@ let currentDirection = 'up'; // Current moving direction
 let queuedDirection = null; // Queued direction (last input)
 let isMoving = false;
 let movementTween = null;
+let pulseTween = null;
 
 // Level 1: Start at bottom-center, vertical corridor up
 const LEVEL_1 = [
@@ -86,8 +93,8 @@ function create() {
 
     try {
         // Test elements
-        const testText = this.add.text(400, 30, 'GRID MOVEMENT', {
-            fontSize: '24px',
+        const testText = this.add.text(400, 30, 'GRID MOVEMENT - FIXED', {
+            fontSize: '20px',
             fill: '#FFFF00',
             fontFamily: 'monospace'
         });
@@ -114,6 +121,9 @@ function create() {
         player.add(playerGraphics);
         console.log('Player created (60px sprite, 64px cell)');
 
+        // Start idle pulsation
+        startPulsation('idle');
+
         // Input
         cursors = this.input.keyboard.createCursorKeys();
         keys = this.input.keyboard.addKeys({
@@ -139,7 +149,6 @@ function create() {
 
         // Start moving up
         currentDirection = 'up';
-        startMovement();
 
         console.log('✅ CREATE COMPLETE');
         log('create-check', '✓ Grid movement ready!');
@@ -234,7 +243,7 @@ function createUI() {
     timerText.setScrollFactor(0);
 
     // Level info
-    levelText = this.add.text(400, 570, 'WASD: Change Direction | 1 cell/sec', {
+    levelText = this.add.text(400, 570, 'WASD: Change Direction | Arrow to see debug', {
         fontSize: '14px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
@@ -242,13 +251,13 @@ function createUI() {
     levelText.setOrigin(0.5, 0);
     levelText.setScrollFactor(0);
 
-    // Debug info display
-    debugText = this.add.text(10, 80, '', {
-        fontSize: '12px',
+    // Debug info display - MOVED OUTSIDE VIEWPORT (scroll to see)
+    debugText = this.add.text(850, 50, '', {
+        fontSize: '14px',
         fill: '#00FF00',
         fontFamily: 'monospace',
         backgroundColor: '#000000',
-        padding: { x: 5, y: 5 }
+        padding: { x: 10, y: 10 }
     });
     debugText.setScrollFactor(0);
 }
@@ -277,15 +286,24 @@ function update(time, delta) {
 
     handleInput();
 
+    // FIX: Always try to move if not currently moving
+    // This ensures movement resumes after hitting walls
+    if (!isMoving) {
+        startMovement();
+    }
+
     // Update debug display
     if (debugText) {
         debugText.setText(
+            `=== DEBUG INFO ===\n` +
             `Grid: (${currentGridX},${currentGridY})\n` +
             `Pixel: (${Math.round(player.x)},${Math.round(player.y)})\n` +
             `Direction: ${currentDirection}\n` +
             `Queued: ${queuedDirection || 'none'}\n` +
             `Moving: ${isMoving}\n` +
-            `Tween: ${movementTween ? (movementTween.isPlaying() ? 'playing' : 'stopped') : 'null'}`
+            `Tween: ${movementTween ? (movementTween.isPlaying() ? 'PLAYING' : 'stopped') : 'null'}\n` +
+            `Pulse: ${pulseTween ? (pulseTween.isPlaying() ? 'ACTIVE' : 'stopped') : 'null'}\n` +
+            `Frame: ${updateCount}`
         );
     }
 
@@ -317,16 +335,12 @@ function handleInput() {
 }
 
 function startMovement() {
-    console.log(`[START] isMoving: ${isMoving}, currentDir: ${currentDirection}, queuedDir: ${queuedDirection}, grid: (${currentGridX},${currentGridY})`);
-
     if (isMoving) {
-        console.log('[START] Already moving, returning');
-        return;
+        return; // Already moving, wait for tween to complete
     }
 
     // Try queued direction first, then continue current direction
     const directionToTry = queuedDirection || currentDirection;
-    console.log(`[START] Trying direction: ${directionToTry}`);
 
     // Calculate target grid position
     let targetGridX = currentGridX;
@@ -339,24 +353,19 @@ function startMovement() {
         case 'right': targetGridX++; break;
     }
 
-    console.log(`[START] Target grid: (${targetGridX},${targetGridY})`);
-
     // Check if target is valid (not a wall)
     const isWall = isWallAt(targetGridX, targetGridY);
-    console.log(`[START] Is wall at target? ${isWall}`);
 
     if (isWall) {
         // Can't move in queued direction, try current direction
         if (queuedDirection && queuedDirection !== currentDirection) {
-            console.log('[START] Queued direction blocked, trying current direction');
+            console.log('[BLOCKED] Queued direction blocked, trying current');
             queuedDirection = null;
-            startMovement();
-            return;
+            return; // Will retry next frame with current direction
         }
-        // Blocked - stop moving
-        isMoving = false;
-        queuedDirection = null;
-        console.log(`[BLOCKED] Stopped at grid(${currentGridX},${currentGridY})`);
+        // Blocked in current direction - stay stopped with idle pulsation
+        console.log(`[BLOCKED] Cannot move ${currentDirection} from (${currentGridX},${currentGridY})`);
+        startPulsation('idle'); // Breathing animation when stopped
         return;
     }
 
@@ -364,7 +373,7 @@ function startMovement() {
     if (queuedDirection) {
         currentDirection = queuedDirection;
         queuedDirection = null;
-        console.log(`[DIRECTION CHANGED] Now facing: ${currentDirection}`);
+        console.log(`[DIRECTION CHANGE] Now facing: ${currentDirection}`);
     }
 
     // Start movement tween
@@ -375,7 +384,10 @@ function startMovement() {
     const targetPixelX = targetGridX * GRID_SIZE + GRID_SIZE/2;
     const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
 
-    console.log(`[TWEEN START] Moving from pixel(${player.x},${player.y}) to pixel(${targetPixelX},${targetPixelY})`);
+    console.log(`[MOVE] ${currentDirection} to grid(${targetGridX},${targetGridY})`);
+
+    // Switch to moving pulsation (faster, synced with steps)
+    startPulsation('moving');
 
     // Smooth tween - use stored scene reference
     movementTween = scene.tweens.add({
@@ -384,26 +396,35 @@ function startMovement() {
         y: targetPixelY,
         duration: MOVE_DURATION,
         ease: 'Linear',
-        onStart: () => {
-            console.log('[TWEEN] Animation started');
-        },
-        onUpdate: (tween) => {
-            // Log every 25% progress
-            const progress = Math.floor(tween.progress * 100);
-            if (progress % 25 === 0 && progress > 0) {
-                console.log(`[TWEEN] Progress: ${progress}%`);
-            }
-        },
         onComplete: () => {
-            console.log('[TWEEN COMPLETE] Animation finished');
-            console.log(`[TWEEN COMPLETE] Player at pixel(${player.x},${player.y}), grid(${currentGridX},${currentGridY})`);
+            console.log('[MOVE COMPLETE] Reached grid(${currentGridX},${currentGridY})');
             isMoving = false;
-            console.log('[TWEEN COMPLETE] Calling startMovement() again...');
-            startMovement(); // Continue moving
+            // Movement will continue automatically in next update() cycle
         }
     });
+}
 
-    console.log('[TWEEN] Tween created:', movementTween);
+function startPulsation(mode) {
+    // Stop existing pulsation
+    if (pulseTween) {
+        pulseTween.stop();
+        playerGraphics.setScale(1.0); // Reset scale
+    }
+
+    const duration = mode === 'idle' ? PULSE_IDLE_DURATION : PULSE_MOVE_DURATION;
+
+    // Create pulsating tween
+    pulseTween = scene.tweens.add({
+        targets: playerGraphics,
+        scaleX: PULSE_SCALE_MAX,
+        scaleY: PULSE_SCALE_MAX,
+        duration: duration,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+    });
+
+    console.log(`[PULSE] Started ${mode} pulsation (${duration}ms, ${1000/duration/2} pulses/sec)`);
 }
 
 function isWallAt(gridX, gridY) {
