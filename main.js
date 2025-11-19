@@ -58,7 +58,6 @@ let facing = 'up';
 let queuedInput = null;
 let queueAge = 0;
 let isMoving = false;
-let isStopped = false;
 
 // Pulsation state
 let pulsePhase = 0;
@@ -129,7 +128,7 @@ function create() {
     buildLevel.call(this);
 
     // Create UI
-    const instructions = this.add.text(400, 570, 'WASD: Move | Opposite direction = STOP (2x to reverse)', {
+    const instructions = this.add.text(400, 570, 'WASD/Arrows: Change direction | Stops only at walls', {
         fontSize: '13px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
@@ -222,11 +221,8 @@ function update(time, delta) {
     // Handle input - just queue it
     handleInput();
 
-    // Try to start movement when at grid center
-    if (!isMoving && !isStopped) {
-        tryStartMovement();
-    } else if (!isMoving && isStopped && queuedInput) {
-        // Stopped but got new input - try to process it
+    // Try to start movement when at grid center (always running!)
+    if (!isMoving) {
         tryStartMovement();
     }
 
@@ -272,23 +268,6 @@ function tryStartMovement() {
     // Determine which direction to try
     let dirToTry = queuedInput || facing;
 
-    // STOP FEATURE: Check if input is opposite to current facing
-    if (queuedInput && isOpposite(facing, queuedInput)) {
-        if (!isStopped) {
-            // First opposite input = STOP
-            console.log('[STOP] Stopped at grid center (' + gridX + ',' + gridY + ')');
-            isStopped = true;
-            queuedInput = null;
-            queueAge = 0;
-            return; // Don't move
-        } else {
-            // Second opposite input = reverse direction
-            console.log('[REVERSE] Turning 180 degrees');
-            isStopped = false;
-            // dirToTry is already the opposite direction, continue below
-        }
-    }
-
     // Calculate target cell
     let targetX = gridX;
     let targetY = gridY;
@@ -302,11 +281,12 @@ function tryStartMovement() {
 
     // Check if target is blocked
     if (isWall(targetX, targetY)) {
-        // Can't move there
+        // Can't move there - blocked by wall
         if (queuedInput && queuedInput !== facing) {
             queueAge++;
             console.log('[BLOCKED] Queued input blocked, age: ' + queueAge);
         }
+        // Just stay at current position (idle)
         return;
     }
 
@@ -315,13 +295,8 @@ function tryStartMovement() {
         facing = queuedInput;
         queuedInput = null;
         queueAge = 0;
-        isStopped = false;
         drawTriangle(); // Rotate sprite
         console.log('[TURN] Now facing: ' + facing);
-    } else if (isStopped) {
-        // Resume in same direction
-        isStopped = false;
-        console.log('[RESUME] Continuing ' + facing);
     }
 
     // Start movement to target cell
@@ -346,13 +321,6 @@ function tryStartMovement() {
             if (queuedInput) queueAge++;
         }
     });
-}
-
-function isOpposite(dir1, dir2) {
-    return (dir1 === 'up' && dir2 === 'down') ||
-           (dir1 === 'down' && dir2 === 'up') ||
-           (dir1 === 'left' && dir2 === 'right') ||
-           (dir1 === 'right' && dir2 === 'left');
 }
 
 function isWall(x, y) {
@@ -426,7 +394,6 @@ function updateDebug() {
         `Queued: ${queuedInput || 'none'}\n` +
         `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS}\n` +
         `Moving: ${isMoving}\n` +
-        `Stopped: ${isStopped}\n` +
         `Size: ${(currentSize * 100).toFixed(0)}%`
     );
 }
