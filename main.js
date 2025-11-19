@@ -45,6 +45,7 @@ let lives = 3;
 let livesIcons = [];
 let timerText;
 let levelText;
+let debugText;
 let timeRemaining = 90;
 let updateCount = 0;
 
@@ -240,6 +241,16 @@ function createUI() {
     });
     levelText.setOrigin(0.5, 0);
     levelText.setScrollFactor(0);
+
+    // Debug info display
+    debugText = this.add.text(10, 80, '', {
+        fontSize: '12px',
+        fill: '#00FF00',
+        fontFamily: 'monospace',
+        backgroundColor: '#000000',
+        padding: { x: 5, y: 5 }
+    });
+    debugText.setScrollFactor(0);
 }
 
 function drawLifeIcon(icon, full) {
@@ -265,6 +276,18 @@ function update(time, delta) {
     if (!player) return;
 
     handleInput();
+
+    // Update debug display
+    if (debugText) {
+        debugText.setText(
+            `Grid: (${currentGridX},${currentGridY})\n` +
+            `Pixel: (${Math.round(player.x)},${Math.round(player.y)})\n` +
+            `Direction: ${currentDirection}\n` +
+            `Queued: ${queuedDirection || 'none'}\n` +
+            `Moving: ${isMoving}\n` +
+            `Tween: ${movementTween ? (movementTween.isPlaying() ? 'playing' : 'stopped') : 'null'}`
+        );
+    }
 
     // Timer
     if (timeRemaining > 0) {
@@ -294,10 +317,16 @@ function handleInput() {
 }
 
 function startMovement() {
-    if (isMoving) return;
+    console.log(`[START] isMoving: ${isMoving}, currentDir: ${currentDirection}, queuedDir: ${queuedDirection}, grid: (${currentGridX},${currentGridY})`);
+
+    if (isMoving) {
+        console.log('[START] Already moving, returning');
+        return;
+    }
 
     // Try queued direction first, then continue current direction
     const directionToTry = queuedDirection || currentDirection;
+    console.log(`[START] Trying direction: ${directionToTry}`);
 
     // Calculate target grid position
     let targetGridX = currentGridX;
@@ -310,10 +339,16 @@ function startMovement() {
         case 'right': targetGridX++; break;
     }
 
+    console.log(`[START] Target grid: (${targetGridX},${targetGridY})`);
+
     // Check if target is valid (not a wall)
-    if (isWallAt(targetGridX, targetGridY)) {
+    const isWall = isWallAt(targetGridX, targetGridY);
+    console.log(`[START] Is wall at target? ${isWall}`);
+
+    if (isWall) {
         // Can't move in queued direction, try current direction
         if (queuedDirection && queuedDirection !== currentDirection) {
+            console.log('[START] Queued direction blocked, trying current direction');
             queuedDirection = null;
             startMovement();
             return;
@@ -321,7 +356,7 @@ function startMovement() {
         // Blocked - stop moving
         isMoving = false;
         queuedDirection = null;
-        console.log('Blocked! Stopped at', currentGridX, currentGridY);
+        console.log(`[BLOCKED] Stopped at grid(${currentGridX},${currentGridY})`);
         return;
     }
 
@@ -329,7 +364,7 @@ function startMovement() {
     if (queuedDirection) {
         currentDirection = queuedDirection;
         queuedDirection = null;
-        console.log('Changed direction to:', currentDirection);
+        console.log(`[DIRECTION CHANGED] Now facing: ${currentDirection}`);
     }
 
     // Start movement tween
@@ -340,7 +375,7 @@ function startMovement() {
     const targetPixelX = targetGridX * GRID_SIZE + GRID_SIZE/2;
     const targetPixelY = targetGridY * GRID_SIZE + GRID_SIZE/2;
 
-    console.log(`Moving to grid(${targetGridX},${targetGridY}) pixel(${targetPixelX},${targetPixelY})`);
+    console.log(`[TWEEN START] Moving from pixel(${player.x},${player.y}) to pixel(${targetPixelX},${targetPixelY})`);
 
     // Smooth tween - use stored scene reference
     movementTween = scene.tweens.add({
@@ -349,11 +384,26 @@ function startMovement() {
         y: targetPixelY,
         duration: MOVE_DURATION,
         ease: 'Linear',
+        onStart: () => {
+            console.log('[TWEEN] Animation started');
+        },
+        onUpdate: (tween) => {
+            // Log every 25% progress
+            const progress = Math.floor(tween.progress * 100);
+            if (progress % 25 === 0 && progress > 0) {
+                console.log(`[TWEEN] Progress: ${progress}%`);
+            }
+        },
         onComplete: () => {
+            console.log('[TWEEN COMPLETE] Animation finished');
+            console.log(`[TWEEN COMPLETE] Player at pixel(${player.x},${player.y}), grid(${currentGridX},${currentGridY})`);
             isMoving = false;
+            console.log('[TWEEN COMPLETE] Calling startMovement() again...');
             startMovement(); // Continue moving
         }
     });
+
+    console.log('[TWEEN] Tween created:', movementTween);
 }
 
 function isWallAt(gridX, gridY) {
