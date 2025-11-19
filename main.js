@@ -67,6 +67,7 @@ let queuedDirection = null;
 let queueAge = 0;
 let isMoving = false;
 let movementTween = null;
+let stoppedByPlayer = false; // For STOP input feature
 
 // Pulsation state
 let pulsePhase = 0; // 0 to 1 (breathing cycle)
@@ -228,7 +229,7 @@ function createUI() {
     timerText.setOrigin(1, 0);
     timerText.setScrollFactor(0);
 
-    levelText = this.add.text(400, 570, 'WASD: Move | Opposite direction = instant', {
+    levelText = this.add.text(400, 570, 'WASD: Move | Opposite = STOP (press twice to reverse)', {
         fontSize: '14px',
         fill: '#FFFFFF',
         fontFamily: 'monospace'
@@ -287,6 +288,7 @@ function update(time, delta) {
             `Queued: ${queuedDirection || 'none'}\n` +
             `Queue Age: ${queueAge}/${QUEUE_TIMEOUT_CELLS}\n` +
             `Moving: ${isMoving}\n` +
+            `Stopped: ${stoppedByPlayer}\n` +
             `Pulse: ${pulseRate}/sec\n` +
             `Size: ${(currentSize * 100).toFixed(0)}%`
         );
@@ -300,10 +302,44 @@ function update(time, delta) {
 }
 
 function handleInput() {
-    // Helper to try instant direction change
+    // Helper to check if direction is opposite
+    const isOpposite = (dir1, dir2) => {
+        return (dir1 === 'up' && dir2 === 'down') ||
+               (dir1 === 'down' && dir2 === 'up') ||
+               (dir1 === 'left' && dir2 === 'right') ||
+               (dir1 === 'right' && dir2 === 'left');
+    };
+
+    // Helper to snap player to grid center (fixes drift)
+    const snapToGrid = () => {
+        player.x = currentGridX * GRID_SIZE + GRID_SIZE / 2;
+        player.y = currentGridY * GRID_SIZE + GRID_SIZE / 2;
+        console.log(`[SNAP] Aligned to grid (${currentGridX}, ${currentGridY})`);
+    };
+
+    // Helper to try instant direction change or stop
     const tryInstantTurn = (newDirection) => {
-        if (newDirection === currentDirection) {
-            return; // Already going that way
+        // STOP FEATURE: First opposite input while moving = STOP (don't turn)
+        if (isMoving && isOpposite(currentDirection, newDirection) && !stoppedByPlayer) {
+            console.log('[STOP] Player stopped (opposite input)');
+
+            // Stop tween and snap to grid center
+            if (movementTween) {
+                movementTween.stop();
+            }
+            isMoving = false;
+            stoppedByPlayer = true;
+
+            snapToGrid(); // Fix grid drift
+            setPulseRate('idle');
+
+            // Don't rotate sprite - keep facing current direction
+            return;
+        }
+
+        // Already going that direction
+        if (newDirection === currentDirection && !stoppedByPlayer) {
+            return;
         }
 
         // Check if new direction is valid (not blocked)
@@ -323,14 +359,16 @@ function handleInput() {
             // INSTANT TURN - direction is valid!
             console.log(`[INSTANT TURN] ${currentDirection} → ${newDirection} (valid path)`);
 
-            // Cancel current movement if any
+            // Cancel current movement if any and snap to grid
             if (isMoving && movementTween) {
                 movementTween.stop();
                 isMoving = false;
+                snapToGrid(); // Fix grid drift
             }
 
             // Change direction immediately
             currentDirection = newDirection;
+            stoppedByPlayer = false; // Clear stopped state
             queuedDirection = null;
             queueAge = 0;
             drawPlayerTriangle(); // Rotate triangle instantly
